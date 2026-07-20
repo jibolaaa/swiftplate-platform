@@ -27,5 +27,5 @@ rider@swiftplate.test, customer@swiftplate.test
 ## Roadmap
 - Phase 2 (done): order lifecycle. Role-gated state machine, ownership checks, server-side pricing with the snapshot pattern, full status history timeline, admin overview with revenue.
 - Phase 3 (done): vendor + admin web dashboards. Login with role routing, vendor order queue with state-machine action buttons, admin stats + all-orders table, 5s polling until Phase 5 realtime.
-- Phase 4: customer mobile app (React Native / Expo)
+- Phase 4 (done): customer mobile app (React Native, runs in Expo Go via Expo Snack). Login, browse restaurants, cart, checkout, live order tracking polling every 5s. Code: mobile/customer-app/App.js
 - Phase 5: rider mobile app + real-time updates
