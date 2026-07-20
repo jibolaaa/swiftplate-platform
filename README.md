@@ -25,7 +25,7 @@ admin@swiftplate.test, vendor@swiftplate.test,
 rider@swiftplate.test, customer@swiftplate.test
 
 ## Roadmap
-- Phase 2: order lifecycle endpoints (the state machine in motion)
+- Phase 2 (done): order lifecycle. Role-gated state machine, ownership checks, server-side pricing with the snapshot pattern, full status history timeline, admin overview with revenue.
 - Phase 3: vendor + admin web dashboards
 - Phase 4: customer mobile app (React Native / Expo)
 - Phase 5: rider mobile app + real-time updates
