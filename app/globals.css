@@ -64,3 +64,27 @@ button.small, .btn.small { padding:8px 14px; font-size:13px; }
 .mright { display:flex; align-items:center; gap:12px; white-space:nowrap; }
 .step { display:flex; align-items:center; gap:8px; } .step span { min-width:18px; text-align:center; }
 .checkout-bar { display:flex; justify-content:space-between; align-items:center; gap:14px; background:#fff; border:1px solid var(--line); border-radius:16px; padding:16px; margin-top:14px; flex-wrap:wrap; }
+
+/* ---------- Phase 3: dashboards ---------- */
+.wrap.narrow { max-width: 440px; }
+.wrap.wide { max-width: 960px; }
+.lbl { font-size: 11.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--grey); font-weight: 700; display:block; margin-top: 8px; }
+.dash-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }
+.order-card { border:1px solid var(--line); border-radius:14px; padding:16px; margin-top:12px; }
+.order-card.past { opacity:.65; }
+.order-top { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:6px; }
+.dim { color:#9a9aa5; font-size:12.5px; }
+.status { display:inline-block; font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; font-weight:700; padding:4px 11px; border-radius:999px; background:var(--soft); color:var(--grey); }
+.s-pending { background:#fff3e6; color:#b45f06; }
+.s-accepted, .s-preparing { background:#e8f0fe; color:#1a56db; }
+.s-ready, .s-rider_assigned, .s-picked_up { background:#ede9fe; color:#6d28d9; }
+.s-delivered { background:#e6f6ec; color:var(--green); }
+.s-cancelled { background:#fdeaea; color:var(--red); }
+.stat-row { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:22px; }
+.stat-card { border:1px solid var(--line); border-radius:16px; padding:20px; text-align:center; }
+.stat-card b { font-size:26px; display:block; }
+.stat-card span { color:var(--grey); font-size:13px; }
+.tbl { margin-top: 10px; font-size: 14px; overflow-x: auto; }
+.tr { display:grid; grid-template-columns: 90px 150px 1fr 1fr 1fr 100px; gap:10px; padding:11px 4px; border-bottom:1px solid var(--line); align-items:center; min-width: 640px; }
+.tr.th { color:var(--grey); font-size:11.5px; letter-spacing:.1em; text-transform:uppercase; font-weight:700; }
+@media (max-width:560px){ .stat-row { grid-template-columns:1fr; } }

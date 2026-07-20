@@ -1,16 +1,10 @@
 "use client";
-import { Suspense, useState } from "react";
-import { saveSession } from "../../components/useSession";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { api, setToken } from "../../lib/clientApi";
 
-const DEMO = [
-  ["customer@swiftplate.test", "Customer"],
-  ["vendor@swiftplate.test", "Vendor"],
-  ["rider@swiftplate.test", "Rider"],
-  ["admin@swiftplate.test", "Admin"]
-];
-const HOME = { customer: "/customer", vendor: "/vendor", rider: "/customer", admin: "/admin" };
-
-function LoginInner() {
+export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -19,42 +13,31 @@ function LoginInner() {
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true); setError("");
-    try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Login failed.");
-      saveSession(data.token, data.user);
-      window.location.href = HOME[data.user.role] || "/";
-    } catch (e) { setError(e.message); setBusy(false); }
+    const { ok, data } = await api("/api/auth/login", {
+      method: "POST", body: JSON.stringify({ email, password })
+    });
+    setBusy(false);
+    if (!ok) return setError(data.error || "Login failed.");
+    setToken(data.token);
+    const role = data.user.role;
+    if (role === "vendor") router.push("/vendor");
+    else if (role === "admin") router.push("/admin");
+    else setError(`Logged in as ${role}. The ${role} app is the mobile app (coming in Phase 4/5); this web login serves vendors and admins.`);
   };
 
-  const quick = (e) => { setEmail(e); setPassword("password123"); };
-
   return (
-    <div className="auth">
-      <div className="auth-card">
-        <h1>Swiftplate<span>.</span></h1>
-        <p className="sub">Sign in to your dashboard</p>
-        <form onSubmit={submit}>
-          <input placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
-          <input placeholder="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} />
-          <button disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
-          {error && <p className="bad" style={{ marginTop: 10 }}>{error}</p>}
-        </form>
-        <p className="note" style={{ marginTop: 18 }}>Demo accounts (tap to fill, password is preset):</p>
-        <div className="demo-row">
-          {DEMO.map(([e, label]) => (
-            <button type="button" key={e} className="alt small" onClick={() => quick(e)}>{label}</button>
-          ))}
-        </div>
-      </div>
+    <div className="wrap narrow">
+      <h1>Swiftplate<span>.</span></h1>
+      <p className="sub">Vendor and admin sign in</p>
+      <form onSubmit={submit} className="panel">
+        <label className="lbl">Email</label>
+        <input value={email} onChange={e => setEmail(e.target.value)} placeholder="vendor@swiftplate.test" />
+        <label className="lbl">Password</label>
+        <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="password123" />
+        <button disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
+        {error && <p className="bad note">{error}</p>}
+        <p className="note">Demo: vendor@swiftplate.test / admin@swiftplate.test · password123</p>
+      </form>
     </div>
   );
-}
-
-export default function LoginPage() {
-  return <Suspense><LoginInner /></Suspense>;
 }

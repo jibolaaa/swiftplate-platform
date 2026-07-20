@@ -1,88 +1,105 @@
 "use client";
+// VENDOR DASHBOARD
+// Shows the restaurant's order queue, newest first, refreshing every
+// 5 seconds (polling; Phase 5 upgrades this to instant WebSockets).
+// Each order card shows exactly the action its current state allows:
+// the UI mirrors the state machine on the server.
 import { useEffect, useState, useCallback } from "react";
-import { useSession, api, clearSession, naira } from "../../components/useSession";
+import { useRouter } from "next/navigation";
+import { api, setToken, naira, STATUS_LABEL } from "../../lib/clientApi";
 
-const NEXT = { pending: ["accept", "Accept order"], accepted: ["preparing", "Start preparing"], preparing: ["ready", "Mark ready"] };
-const LABEL = { pending: "New", accepted: "Accepted", preparing: "Preparing", ready: "Ready for pickup", rider_assigned: "Rider assigned", picked_up: "On the way", delivered: "Delivered", cancelled: "Cancelled" };
+const NEXT_ACTION = {
+  pending:   { action: "accept",    label: "Accept order" },
+  accepted:  { action: "preparing", label: "Start preparing" },
+  preparing: { action: "ready",     label: "Mark ready" }
+};
 
 export default function VendorDashboard() {
-  const { user, loading } = useSession(["vendor", "admin"]);
+  const router = useRouter();
+  const [me, setMe] = useState(null);
   const [orders, setOrders] = useState([]);
-  const [busy, setBusy] = useState(null);
+  const [error, setError] = useState("");
+  const [busyId, setBusyId] = useState(null);
 
   const load = useCallback(async () => {
-    const { data } = await api("/api/orders");
-    if (data.orders) setOrders(data.orders);
-  }, []);
+    const { ok, status, data } = await api("/api/orders");
+    if (!ok) {
+      if (status === 401 || status === 403) return router.push("/login");
+      return setError(data.error || "Failed to load orders.");
+    }
+    setOrders(data.orders || []);
+  }, [router]);
 
   useEffect(() => {
-    if (loading) return;
-    load();
-    const t = setInterval(load, 5000); // poll every 5s (real-time comes in Phase 5)
+    (async () => {
+      const { ok, data } = await api("/api/auth/me");
+      if (!ok || data.role !== "vendor") return router.push("/login");
+      setMe(data);
+      load();
+    })();
+    const t = setInterval(load, 5000); // the 5s heartbeat
     return () => clearInterval(t);
-  }, [loading, load]);
+  }, [load, router]);
 
   const act = async (id, action) => {
-    setBusy(id + action);
-    await api(`/api/orders/${id}/transition`, { method: "POST", body: JSON.stringify({ action }) });
-    await load();
-    setBusy(null);
+    setBusyId(id);
+    const { ok, data } = await api(`/api/orders/${id}/transition`, {
+      method: "POST", body: JSON.stringify({ action })
+    });
+    setBusyId(null);
+    if (!ok) return setError(data.error || "Action failed.");
+    setError("");
+    load();
   };
 
-  if (loading) return <div className="wrap"><p>Loading…</p></div>;
-
   const active = orders.filter(o => !["delivered", "cancelled"].includes(o.status));
-  const done = orders.filter(o => ["delivered", "cancelled"].includes(o.status));
+  const past = orders.filter(o => ["delivered", "cancelled"].includes(o.status));
 
   return (
-    <div className="dash">
-      <header className="topbar">
-        <div><b>Swiftplate</b> <span className="pill">Vendor</span></div>
-        <div className="topright">
-          <span className="note">{user.full_name}</span>
-          <button className="alt small" onClick={() => { clearSession(); location.href = "/login"; }}>Sign out</button>
+    <div className="wrap">
+      <div className="dash-head">
+        <div>
+          <h1>Vendor<span>.</span></h1>
+          <p className="sub">{me ? `${me.name} · order queue refreshes every 5s` : "Loading…"}</p>
         </div>
-      </header>
+        <button className="alt" onClick={() => { setToken(null); router.push("/login"); }}>Sign out</button>
+      </div>
+      {error && <p className="bad note">{error}</p>}
 
-      <div className="wrap">
-        <h2>Incoming orders <span className="count">{active.length} active</span></h2>
-        {active.length === 0 && <p className="empty">No active orders. New orders appear here automatically.</p>}
-        <div className="cards">
-          {active.map(o => (
-            <div className="ocard" key={o.id}>
-              <div className="ocard-top">
-                <span className={`status s-${o.status}`}>{LABEL[o.status] || o.status}</span>
-                <b>{naira(o.total_kobo)}</b>
-              </div>
-              <p className="who">{o.customer_name}</p>
-              <p className="addr">{o.delivery_address}</p>
-              <p className="oid">#{o.id.slice(0, 8)}</p>
-              {NEXT[o.status] && (
-                <button disabled={busy === o.id + NEXT[o.status][0]} onClick={() => act(o.id, NEXT[o.status][0])}>
-                  {busy === o.id + NEXT[o.status][0] ? "…" : NEXT[o.status][1]}
-                </button>
-              )}
-              {o.status === "ready" && <p className="note">Waiting for a rider to claim.</p>}
-              {["rider_assigned", "picked_up"].includes(o.status) && <p className="note">Rider handling delivery.</p>}
+      <div className="panel">
+        <h2>Active orders ({active.length})</h2>
+        {active.length === 0 && <p className="note">No active orders. New ones appear here automatically.</p>}
+        {active.map(o => (
+          <div className="order-card" key={o.id}>
+            <div className="order-top">
+              <span className={`status s-${o.status}`}>{STATUS_LABEL[o.status]}</span>
+              <b>{naira(o.total_kobo)}</b>
             </div>
-          ))}
-        </div>
-
-        {done.length > 0 && <>
-          <h2 style={{ marginTop: 40 }}>Completed</h2>
-          <div className="cards">
-            {done.map(o => (
-              <div className="ocard muted" key={o.id}>
-                <div className="ocard-top">
-                  <span className={`status s-${o.status}`}>{LABEL[o.status]}</span>
-                  <b>{naira(o.total_kobo)}</b>
-                </div>
-                <p className="who">{o.customer_name}</p>
-                <p className="oid">#{o.id.slice(0, 8)}</p>
-              </div>
-            ))}
+            <p className="note">{o.customer_name} · {o.delivery_address}</p>
+            <p className="note dim">#{o.id.slice(0, 8)} · {new Date(o.created_at).toLocaleTimeString()}</p>
+            {NEXT_ACTION[o.status] && (
+              <button disabled={busyId === o.id} onClick={() => act(o.id, NEXT_ACTION[o.status].action)}>
+                {busyId === o.id ? "Working…" : NEXT_ACTION[o.status].label}
+              </button>
+            )}
+            {["ready", "rider_assigned", "picked_up"].includes(o.status) && !NEXT_ACTION[o.status] && (
+              <p className="note">Waiting on rider…</p>
+            )}
           </div>
-        </>}
+        ))}
+      </div>
+
+      <div className="panel">
+        <h2>Completed ({past.length})</h2>
+        {past.slice(0, 6).map(o => (
+          <div className="order-card past" key={o.id}>
+            <div className="order-top">
+              <span className={`status s-${o.status}`}>{STATUS_LABEL[o.status]}</span>
+              <b>{naira(o.total_kobo)}</b>
+            </div>
+            <p className="note dim">#{o.id.slice(0, 8)} · {o.customer_name}</p>
+          </div>
+        ))}
       </div>
     </div>
   );
