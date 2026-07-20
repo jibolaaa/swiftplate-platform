@@ -10,7 +10,7 @@ import {
   FlatList, ActivityIndicator, StyleSheet, ScrollView, RefreshControl
 } from "react-native";
 
-const API_URL = "https://YOUR-SWIFTPLATE-URL.vercel.app"; // ← CHANGE THIS
+const API_URL = "https://swiftplate-platform.vercel.app"; // live backend
 
 const BRAND = "#e8452e";
 const naira = (kobo) => "\u20A6" + (Number(kobo) / 100).toLocaleString("en-NG", { maximumFractionDigits: 0 });
@@ -96,12 +96,18 @@ export default function App() {
 
   // ---------- checkout ----------
   const placeOrder = async () => {
-    if (!active || cartCount === 0) return;
+    // Derive the restaurant from the cart items themselves (the source
+    // of truth), not from which screen the user happens to be on.
+    const lines = Object.values(cart);
+    if (lines.length === 0) return setError("Your cart is empty.");
+    const restaurant_id = lines[0].item.restaurant_id;
+    if (!restaurant_id) return setError("Cart items are missing restaurant info. Re-add them.");
+    if (!address.trim()) return setError("Please enter a delivery address.");
     setBusy(true); setError("");
-    const items = Object.values(cart).map(c => ({ menu_item_id: c.item.id, qty: c.qty }));
+    const items = lines.map(c => ({ menu_item_id: c.item.id, qty: c.qty }));
     const { ok, data } = await api("/api/orders", {
       method: "POST",
-      body: JSON.stringify({ restaurant_id: active.id, items, delivery_address: address })
+      body: JSON.stringify({ restaurant_id, items, delivery_address: address })
     });
     setBusy(false);
     if (!ok) return setError(data.error || "Could not place order");
