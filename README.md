@@ -28,4 +28,4 @@ rider@swiftplate.test, customer@swiftplate.test
 - Phase 2 (done): order lifecycle. Role-gated state machine, ownership checks, server-side pricing with the snapshot pattern, full status history timeline, admin overview with revenue.
 - Phase 3 (done): vendor + admin web dashboards. Login with role routing, vendor order queue with state-machine action buttons, admin stats + all-orders table, 5s polling until Phase 5 realtime.
 - Phase 4 (done): customer mobile app (React Native, runs in Expo Go via Expo Snack). Login, browse restaurants, cart, checkout, live order tracking polling every 5s. Code: mobile/customer-app/App.js
-- Phase 5: rider mobile app + real-time updates
+- Phase 5 (done): rider mobile app (React Native, Expo Go via Snack). Dark theme, claim/pickup/deliver flow, session stats. Realtime: 5s polling everywhere; a persistent-connection service (e.g. Pusher/Supabase Realtime) is the noted upgrade path since raw WebSockets do not fit Vercel serverless. Code: mobile/rider-app/App.js
