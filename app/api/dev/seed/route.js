@@ -34,10 +34,14 @@ export async function POST(req) {
       ON CONFLICT (user_id) DO NOTHING
     `;
 
-    const [restaurant] = await sql`
+    // Only create the demo kitchen once. (restaurants has no unique name,
+    // so ON CONFLICT alone never fired and each seed made another copy.)
+    const [existing] = await sql`
+      SELECT id FROM restaurants WHERE owner_id = ${vendor.id} AND name = 'Mama Put Express' LIMIT 1
+    `;
+    const [restaurant] = existing ? [] : await sql`
       INSERT INTO restaurants (owner_id, name, description, address, is_open)
       VALUES (${vendor.id}, 'Mama Put Express', 'Proper Nigerian food, fast.', '12 Allen Avenue, Ikeja, Lagos', TRUE)
-      ON CONFLICT DO NOTHING
       RETURNING id, name
     `;
 
