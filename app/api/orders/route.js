@@ -80,26 +80,38 @@ export async function GET(req) {
       return Response.json({ orders });
     }
 
+    // What's in each order, so the kitchen knows what to cook and the
+    // rider what to carry: [{ name, qty }], or null for an empty order.
     if (user.role === "vendor") {
       const orders = await sql`
-        SELECT o.*, u.full_name AS customer_name FROM orders o
+        SELECT o.*, u.full_name AS customer_name, d.full_name AS rider_name,
+          (SELECT json_agg(json_build_object('name', i.item_name, 'qty', i.quantity) ORDER BY i.item_name)
+             FROM order_items i WHERE i.order_id = o.id) AS items
+        FROM orders o
         JOIN restaurants r ON r.id = o.restaurant_id
         JOIN users u ON u.id = o.customer_id
-        WHERE r.owner_id = ${user.sub} ORDER BY o.created_at DESC LIMIT 20
+        LEFT JOIN users d ON d.id = o.rider_id
+        WHERE r.owner_id = ${user.sub} ORDER BY o.created_at DESC LIMIT 30
       `;
       return Response.json({ orders });
     }
 
     if (user.role === "rider") {
       const assigned = await sql`
-        SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address FROM orders o
+        SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address,
+          (SELECT json_agg(json_build_object('name', i.item_name, 'qty', i.quantity) ORDER BY i.item_name)
+             FROM order_items i WHERE i.order_id = o.id) AS items
+        FROM orders o
         JOIN restaurants r ON r.id = o.restaurant_id
         WHERE o.rider_id = ${user.sub}
           AND o.status IN ('rider_assigned','picked_up')
         ORDER BY o.created_at DESC
       `;
       const available = await sql`
-        SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address FROM orders o
+        SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address,
+          (SELECT json_agg(json_build_object('name', i.item_name, 'qty', i.quantity) ORDER BY i.item_name)
+             FROM order_items i WHERE i.order_id = o.id) AS items
+        FROM orders o
         JOIN restaurants r ON r.id = o.restaurant_id
         WHERE o.status = 'ready' AND o.rider_id IS NULL
         ORDER BY o.created_at ASC

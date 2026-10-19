@@ -1,106 +1,120 @@
 "use client";
-// VENDOR DASHBOARD
-// Shows the restaurant's order queue, newest first, refreshing every
-// 5 seconds (polling; Phase 5 upgrades this to instant WebSockets).
-// Each order card shows exactly the action its current state allows:
-// the UI mirrors the state machine on the server.
-import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { api, setToken, naira, STATUS_LABEL } from "../../lib/clientApi";
+// KITCHEN SCREEN
+// The kitchen's orders as a board: new, cooking, waiting for a rider, done.
+// It checks for changes every 5 seconds. Each ticket only offers the next
+// step the server's state machine allows, so the screen can't skip one.
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
+import AppFrame, { useRoleGate } from "../../components/AppFrame";
+import { api } from "../../lib/clientApi";
+import { STATUS_LABEL, lagosTime, naira, shortId } from "../../lib/food";
 
-const NEXT_ACTION = {
-  pending:   { action: "accept",    label: "Accept order" },
-  accepted:  { action: "preparing", label: "Start preparing" },
-  preparing: { action: "ready",     label: "Mark ready" }
+const NEXT = {
+  pending: { action: "accept", label: "Accept order" },
+  accepted: { action: "preparing", label: "Start cooking" },
+  preparing: { action: "ready", label: "Food is ready" }
 };
+const COLUMNS = [
+  { key: "new", title: "New", match: ["pending"], empty: "No new orders. They pop up here by themselves." },
+  { key: "cooking", title: "Cooking", match: ["accepted", "preparing"], empty: "Nothing on the stove." },
+  { key: "waiting", title: "Waiting for a rider", match: ["ready", "rider_assigned"], empty: "Nothing waiting." },
+  { key: "done", title: "Done", match: ["picked_up", "delivered", "cancelled"], empty: "Finished orders show here." }
+];
 
-export default function VendorDashboard() {
-  const router = useRouter();
-  const [me, setMe] = useState(null);
+export default function KitchenPage() {
+  const session = useRoleGate("vendor");
   const [orders, setOrders] = useState([]);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState(null);
+  const [fresh, setFresh] = useState(new Set());
+  const seen = useRef(null);
 
   const load = useCallback(async () => {
-    const { ok, status, data } = await api("/api/orders");
-    if (!ok) {
-      if (status === 401 || status === 403) return router.push("/login");
-      return setError(data.error || "Failed to load orders.");
+    const r = await api("/api/orders", { role: "vendor" });
+    if (!r.ok) { if (r.status !== 401) setError(r.data.error || "Couldn't load orders."); return; }
+    const list = r.data.orders || [];
+    if (seen.current) {
+      const arrivals = list.filter(o => o.status === "pending" && !seen.current.has(o.id)).map(o => o.id);
+      if (arrivals.length) setFresh(f => new Set([...f, ...arrivals]));
     }
-    setOrders(data.orders || []);
-  }, [router]);
+    seen.current = new Set(list.map(o => o.id));
+    setOrders(list);
+    setError("");
+  }, []);
 
   useEffect(() => {
-    (async () => {
-      const { ok, data } = await api("/api/auth/me");
-      if (!ok || data.role !== "vendor") return router.push("/login");
-      setMe(data);
-      load();
-    })();
-    const t = setInterval(load, 5000); // the 5s heartbeat
-    return () => clearInterval(t);
-  }, [load, router]);
-
-  const act = async (id, action) => {
-    setBusyId(id);
-    const { ok, data } = await api(`/api/orders/${id}/transition`, {
-      method: "POST", body: JSON.stringify({ action })
-    });
-    setBusyId(null);
-    if (!ok) return setError(data.error || "Action failed.");
-    setError("");
+    if (!session) return;
     load();
-  };
+    const t = setInterval(() => { if (!document.hidden) load(); }, 5000);
+    return () => clearInterval(t);
+  }, [session, load]);
 
-  const active = orders.filter(o => !["delivered", "cancelled"].includes(o.status));
-  const past = orders.filter(o => ["delivered", "cancelled"].includes(o.status));
+  const newCount = orders.filter(o => o.status === "pending").length;
+  useEffect(() => { document.title = newCount ? `(${newCount}) New orders | Swiftplate Kitchen` : "Kitchen | Swiftplate"; }, [newCount]);
+
+  async function act(o) {
+    const step = NEXT[o.status];
+    setBusyId(o.id);
+    const r = await api(`/api/orders/${o.id}/transition`, { role: "vendor", method: "POST", body: JSON.stringify({ action: step.action }) });
+    setBusyId(null);
+    if (!r.ok) setError(r.data.error || "That didn't go through. Try again.");
+    setFresh(f => { const n = new Set(f); n.delete(o.id); return n; });
+    load();
+  }
 
   return (
-    <div className="wrap">
-      <div className="dash-head">
+    <AppFrame role="vendor" session={session}>
+      <div className="app-head">
         <div>
-          <h1>Vendor<span>.</span></h1>
-          <p className="sub">{me ? `${me.name} · order queue refreshes every 5s` : "Loading…"}</p>
+          <h1 className="title">Kitchen orders</h1>
+          <p className="muted">{orders.length ? `${orders.length} recent ${orders.length === 1 ? "order" : "orders"}.` : "No orders yet."} <Link href="/" className="link" target="_blank">Place a test order</Link></p>
         </div>
-        <button className="alt" onClick={() => { setToken(null); router.push("/login"); }}>Sign out</button>
+        <span className="live">Live, checks every 5 seconds</span>
       </div>
-      {error && <p className="bad note">{error}</p>}
-
-      <div className="panel">
-        <h2>Active orders ({active.length})</h2>
-        {active.length === 0 && <p className="note">No active orders. New ones appear here automatically.</p>}
-        {active.map(o => (
-          <div className="order-card" key={o.id}>
-            <div className="order-top">
-              <span className={`status s-${o.status}`}>{STATUS_LABEL[o.status]}</span>
-              <b>{naira(o.total_kobo)}</b>
-            </div>
-            <p className="note">{o.customer_name} · {o.delivery_address}</p>
-            <p className="note dim">#{o.id.slice(0, 8)} · {new Date(o.created_at).toLocaleTimeString()}</p>
-            {NEXT_ACTION[o.status] && (
-              <button disabled={busyId === o.id} onClick={() => act(o.id, NEXT_ACTION[o.status].action)}>
-                {busyId === o.id ? "Working…" : NEXT_ACTION[o.status].label}
-              </button>
-            )}
-            {["ready", "rider_assigned", "picked_up"].includes(o.status) && !NEXT_ACTION[o.status] && (
-              <p className="note">Waiting on rider…</p>
-            )}
-          </div>
-        ))}
+      {error && <p className="error" role="alert" style={{ marginBottom: 14 }}>{error}</p>}
+      <div className="board">
+        {COLUMNS.map(col => {
+          const list = orders.filter(o => col.match.includes(o.status));
+          const shown = col.key === "done" ? list.slice(0, 8) : list;
+          return (
+            <section key={col.key} className={`col ${col.key}`} aria-label={col.title}>
+              <h2 className="col-head"><span>{col.title}</span><span className="n">{list.length}</span></h2>
+              {shown.length === 0 && <p className="col-empty">{col.empty}</p>}
+              {col.key === "done" ? (
+                <div className="done-list">
+                  {shown.map(o => (
+                    <div key={o.id} className="done-row">
+                      <span>#{shortId(o.id)} · {o.customer_name}</span>
+                      <span className={`status s-${o.status}`}>{STATUS_LABEL[o.status]}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : shown.map(o => (
+                <article key={o.id} className={`ticket ${fresh.has(o.id) ? "fresh" : ""}`}>
+                  <div className="ticket-top">
+                    <span className="ticket-id">#{shortId(o.id)}</span>
+                    <span className={`status s-${o.status}`}>{fresh.has(o.id) ? "Just in" : STATUS_LABEL[o.status]}</span>
+                  </div>
+                  {Array.isArray(o.items) && o.items.length > 0 && (
+                    <ul>{o.items.map((it, i) => <li key={i}><b>{it.qty}×</b><span>{it.name}</span></li>)}</ul>
+                  )}
+                  <div className="ticket-meta">
+                    <span>{o.customer_name} · {lagosTime(o.created_at)} · {naira(o.total_kobo)}</span>
+                    <span>To {o.delivery_address}</span>
+                    {o.status === "rider_assigned" && <span><b>{o.rider_name || "A rider"}</b> is coming to pick it up</span>}
+                    {o.status === "ready" && <span>Packed. Finding a rider…</span>}
+                  </div>
+                  {NEXT[o.status] && (
+                    <button type="button" className={`btn ${o.status === "pending" ? "" : "ink"}`} disabled={busyId === o.id} onClick={() => act(o)}>
+                      {busyId === o.id ? "Saving…" : NEXT[o.status].label}
+                    </button>
+                  )}
+                </article>
+              ))}
+            </section>
+          );
+        })}
       </div>
-
-      <div className="panel">
-        <h2>Completed ({past.length})</h2>
-        {past.slice(0, 6).map(o => (
-          <div className="order-card past" key={o.id}>
-            <div className="order-top">
-              <span className={`status s-${o.status}`}>{STATUS_LABEL[o.status]}</span>
-              <b>{naira(o.total_kobo)}</b>
-            </div>
-            <p className="note dim">#{o.id.slice(0, 8)} · {o.customer_name}</p>
-          </div>
-        ))}
-      </div>
-    </div>
+    </AppFrame>
   );
 }

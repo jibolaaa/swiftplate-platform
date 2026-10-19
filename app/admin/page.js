@@ -1,74 +1,85 @@
 "use client";
-// ADMIN DASHBOARD: bird's-eye view. Stats cards + every order in the
-// system with who handled it. Same 5s polling heartbeat.
-import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { api, setToken, naira, STATUS_LABEL } from "../../lib/clientApi";
+// ADMIN SCREEN: every order on the platform, who handled it, and the money.
+// Same 5 second check as the other screens.
+import { useCallback, useEffect, useState } from "react";
+import AppFrame, { useRoleGate } from "../../components/AppFrame";
+import { api } from "../../lib/clientApi";
+import { STATUS_LABEL, lagosTime, naira, shortId } from "../../lib/food";
 
-export default function AdminDashboard() {
-  const router = useRouter();
-  const [me, setMe] = useState(null);
+const FILTERS = [
+  ["all", "All", () => true],
+  ["active", "In progress", o => !["delivered", "cancelled"].includes(o.status)],
+  ["delivered", "Delivered", o => o.status === "delivered"],
+  ["cancelled", "Cancelled", o => o.status === "cancelled"]
+];
+
+export default function AdminPage() {
+  const session = useRoleGate("admin");
   const [stats, setStats] = useState(null);
   const [orders, setOrders] = useState([]);
+  const [show, setShow] = useState("all");
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const { ok, status, data } = await api("/api/admin/orders");
-    if (!ok) {
-      if (status === 401 || status === 403) return router.push("/login");
-      return setError(data.error || "Failed to load.");
-    }
-    setStats(data.stats); setOrders(data.orders);
-  }, [router]);
+    const r = await api("/api/admin/orders", { role: "admin" });
+    if (!r.ok) { if (r.status !== 401) setError(r.data.error || "Couldn't load orders."); return; }
+    setStats(r.data.stats);
+    setOrders(r.data.orders || []);
+    setError("");
+  }, []);
 
   useEffect(() => {
-    (async () => {
-      const { ok, data } = await api("/api/auth/me");
-      if (!ok || data.role !== "admin") return router.push("/login");
-      setMe(data);
-      load();
-    })();
-    const t = setInterval(load, 5000);
+    if (!session) return;
+    load();
+    const t = setInterval(() => { if (!document.hidden) load(); }, 5000);
     return () => clearInterval(t);
-  }, [load, router]);
+  }, [session, load]);
+
+  const active = orders.filter(o => !["delivered", "cancelled"].includes(o.status)).length;
+  const test = FILTERS.find(f => f[0] === show)[2];
+  const shown = orders.filter(test);
 
   return (
-    <div className="wrap wide">
-      <div className="dash-head">
+    <AppFrame role="admin" session={session}>
+      <div className="app-head">
         <div>
-          <h1>Admin<span>.</span></h1>
-          <p className="sub">{me ? `${me.name} · everything, refreshed every 5s` : "Loading…"}</p>
+          <h1 className="title">Overview</h1>
+          <p className="muted">Every order on Swiftplate, newest first.</p>
         </div>
-        <button className="alt" onClick={() => { setToken(null); router.push("/login"); }}>Sign out</button>
+        <span className="live">Live, checks every 5 seconds</span>
       </div>
-      {error && <p className="bad note">{error}</p>}
-
-      {stats && (
-        <div className="stat-row">
-          <div className="stat-card"><b>{stats.total_orders}</b><span>Total orders</span></div>
-          <div className="stat-card"><b>{stats.delivered}</b><span>Delivered</span></div>
-          <div className="stat-card"><b>{naira(stats.revenue_kobo)}</b><span>Revenue (delivered)</span></div>
+      {error && <p className="error" role="alert" style={{ marginBottom: 14 }}>{error}</p>}
+      <div className="stats">
+        <div className="stat hot"><span>Revenue (delivered)</span><b>{stats ? naira(stats.revenue_kobo) : "…"}</b></div>
+        <div className="stat"><span>Orders</span><b>{stats?.total_orders ?? "…"}</b></div>
+        <div className="stat"><span>Delivered</span><b>{stats?.delivered ?? "…"}</b></div>
+        <div className="stat"><span>In progress now</span><b>{stats ? active : "…"}</b></div>
+      </div>
+      <div className="filters" role="group" aria-label="Show">
+        {FILTERS.map(([key, label]) => (
+          <button key={key} type="button" aria-pressed={show === key} onClick={() => setShow(key)}>{label}</button>
+        ))}
+      </div>
+      {shown.length === 0 ? <p className="col-empty">No orders here yet.</p> : (
+        <div className="table-wrap">
+          <table className="table">
+            <thead><tr><th>Order</th><th>Status</th><th>Kitchen</th><th>Customer</th><th>Rider</th><th>Time</th><th className="num">Total</th></tr></thead>
+            <tbody>
+              {shown.map(o => (
+                <tr key={o.id}>
+                  <td><b>#{shortId(o.id)}</b></td>
+                  <td><span className={`status s-${o.status}`}>{STATUS_LABEL[o.status]}</span></td>
+                  <td>{o.restaurant}</td>
+                  <td className="hide-sm">{o.customer}</td>
+                  <td className="hide-sm">{o.rider || <span className="muted">None yet</span>}</td>
+                  <td className="muted">{lagosTime(o.created_at)}</td>
+                  <td className="num"><b>{naira(o.total_kobo)}</b></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
-
-      <div className="panel">
-        <h2>All orders</h2>
-        <div className="tbl">
-          <div className="tr th">
-            <span>Order</span><span>Status</span><span>Restaurant</span><span>Customer</span><span>Rider</span><span>Total</span>
-          </div>
-          {orders.map(o => (
-            <div className="tr" key={o.id}>
-              <span className="dim">#{o.id.slice(0, 8)}</span>
-              <span><span className={`status s-${o.status}`}>{STATUS_LABEL[o.status]}</span></span>
-              <span>{o.restaurant}</span>
-              <span>{o.customer}</span>
-              <span>{o.rider || "—"}</span>
-              <span><b>{naira(o.total_kobo)}</b></span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
+    </AppFrame>
   );
 }

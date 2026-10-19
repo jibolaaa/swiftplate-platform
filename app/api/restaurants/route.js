@@ -8,7 +8,7 @@ export async function GET() {
       FROM restaurants r WHERE r.is_open = TRUE ORDER BY r.created_at
     `;
     const menus = await sql`
-      SELECT id, restaurant_id, name, description, price_kobo
+      SELECT id, restaurant_id, name, description, price_kobo, image_url
       FROM menu_items WHERE is_available = TRUE ORDER BY created_at
     `;
     return Response.json({

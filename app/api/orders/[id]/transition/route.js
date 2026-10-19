@@ -65,6 +65,10 @@ export async function POST(req, { params }) {
     }
 
     // ---- apply the transition ----
+    // Only if the order is still in the state we just checked. If two
+    // riders tap "claim" at the same moment, or the kitchen double-taps,
+    // the second update finds nothing to change and gets a clear 409
+    // instead of quietly overwriting the first (optimistic concurrency).
     const riderSet = action === "claim" ? user.sub : order.rider_id;
     const [updated] = await sql`
       UPDATE orders
@@ -72,9 +76,11 @@ export async function POST(req, { params }) {
           rider_id = ${riderSet},
           cancel_reason = ${action === "cancel" ? (reason || "cancelled") : order.cancel_reason},
           updated_at = now()
-      WHERE id = ${order.id}
+      WHERE id = ${order.id} AND status = ${order.status}
       RETURNING *
     `;
+    if (!updated)
+      return Response.json({ error: "Someone else changed this order a moment ago. Refresh and try again." }, { status: 409 });
     await sql`
       INSERT INTO order_status_history (order_id, status, changed_by)
       VALUES (${order.id}, ${t.to}, ${user.sub})

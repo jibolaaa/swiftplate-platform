@@ -68,7 +68,7 @@ export default function TestConsole() {
   );
 
   return (
-    <div className="wrap">
+    <div className="wrap console">
       <h1>Test console<span>.</span></h1>
       <p className="sub">
         {who ? <>Logged in: <b>{who.full_name}</b> · role: <b>{who.role}</b></> : "Not logged in."}
