@@ -1,5 +1,9 @@
 import { requireDb } from "../../../lib/db";
 
+// Read fresh on every request. Without this, Next.js saves the list once at
+// build time and the apps never see a kitchen open, close or change its menu.
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const sql = requireDb();

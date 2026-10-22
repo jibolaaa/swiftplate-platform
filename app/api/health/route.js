@@ -1,6 +1,9 @@
 // Quick health check: proves the deploy works and the DB is reachable.
 import { requireDb } from "../../../lib/db";
 
+// Check the database on every request, not once at build time.
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const sql = requireDb();

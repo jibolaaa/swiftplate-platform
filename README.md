@@ -25,7 +25,8 @@ Warm and tasty: a cream background like a menu card, ink like a chalkboard, toma
 - **No double claims:** a transition only applies if the order is still in the state that was checked, so two riders tapping at once can't both get the job (optimistic concurrency; the loser gets a 409).
 - **Server-side pricing:** the client sends dish ids and quantities only. The server reads real prices and snapshots each dish's name and price into the order.
 - **Near-live updates:** screens check every 5 seconds. A realtime service (Pusher, Supabase Realtime) is the upgrade path, since plain WebSockets don't suit Vercel's serverless functions.
-- **Phone apps:** customer and rider apps in React Native, run with Expo Go via Expo Snack (`mobile/`).
+- **Phone apps** (`mobile/`): customer and rider apps in React Native, with the same look as the website. Each one is a single App.js: open it in Expo Snack (snack.expo.dev) and scan the code with Expo Go. They use the live API, so an order placed in the app shows up on the kitchen board and the rider's list.
+- **Fresh lists:** the kitchens API reads the database on every request (`dynamic = "force-dynamic"`), so a kitchen that opens, closes or changes its menu shows up in the apps straight away instead of waiting for the next deploy.
 
 ## Project layout
 - `app/(shop)/` customer pages: home, kitchen menus (`/r/[id]`), checkout, orders and tracking, how it's built

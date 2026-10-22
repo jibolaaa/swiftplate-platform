@@ -1,275 +1,357 @@
 // ============================================================
-//  SWIFTPLATE · RIDER APP  (React Native, Expo Go)
-//  Dark theme. Claim available deliveries, pick up, deliver.
-//  Paste this whole file into App.js at snack.expo.dev
+//  SWIFTPLATE · RIDER APP  (React Native, Expo)
+//  Jobs that are packed and ready, and the one you're on.
+//  Taking a job is first come, first served: if another rider
+//  gets there first, the server says so (409) and the job goes.
+//  To try it: paste this file into App.js at snack.expo.dev and
+//  open it in Expo Go. Snack adds the packages it imports.
 // ============================================================
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  SafeAreaView, View, Text, TextInput, TouchableOpacity,
-  ScrollView, ActivityIndicator, StyleSheet, RefreshControl
+  View, Text, TextInput, Pressable, ScrollView, ActivityIndicator, StyleSheet,
+  RefreshControl, KeyboardAvoidingView, Platform
 } from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
+import {
+  useFonts, BricolageGrotesque_400Regular, BricolageGrotesque_500Medium,
+  BricolageGrotesque_600SemiBold, BricolageGrotesque_700Bold, BricolageGrotesque_800ExtraBold
+} from "@expo-google-fonts/bricolage-grotesque";
 
-const API_URL = "https://swiftplate-platform.vercel.app"; // live backend
+const API_URL = "https://swiftplate-platform.vercel.app";
+const DEMO = { email: "rider@swiftplate.test", password: "password123", name: "Rex" };
 
-const RED = "#e8452e";
-const BG = "#101014";
-const CARD = "#1a1a21";
-const LINE = "#26262e";
-const TXT = "#f2f2f5";
-const DIM = "#8b8b96";
-const GREEN = "#22c07a";
-const naira = (kobo) => "\u20A6" + (Number(kobo) / 100).toLocaleString("en-NG", { maximumFractionDigits: 0 });
+const C = {
+  cream: "#fbf4ea", card: "#ffffff", soft: "#f4ebdd", ink: "#1e1713", muted: "#6e6158", line: "#eadccb",
+  tomato: "#c2361f", bright: "#e8452e", tomatoSoft: "#fce3dc", pepper: "#1b6e45", pepperSoft: "#e1f1e7",
+  yolk: "#f5b83d", yolkSoft: "#fdf0d2"
+};
+const F = {
+  regular: "BricolageGrotesque_400Regular", medium: "BricolageGrotesque_500Medium",
+  semi: "BricolageGrotesque_600SemiBold", bold: "BricolageGrotesque_700Bold", black: "BricolageGrotesque_800ExtraBold"
+};
 
-export default function App() {
-  const [screen, setScreen] = useState("login"); // login | work
-  const [tab, setTab] = useState("available");   // available | active
-  const [token, setToken] = useState(null);
-  const [user, setUser] = useState(null);
-  const [email, setEmail] = useState("rider@swiftplate.test");
-  const [password, setPassword] = useState("password123");
-  const [busy, setBusy] = useState(false);
-  const [actingId, setActingId] = useState(null);
-  const [error, setError] = useState("");
-  const [available, setAvailable] = useState([]);
-  const [active, setActive] = useState([]);
-  const [doneCount, setDoneCount] = useState(0);
-  const [doneKobo, setDoneKobo] = useState(0);
-  const [refreshing, setRefreshing] = useState(false);
+const naira = (kobo) => "₦" + Math.round(Number(kobo) / 100).toLocaleString("en-NG");
+const shortId = (id = "") => id.slice(0, 6).toUpperCase();
+function lagosTime(d) { // Lagos is UTC+1 all year
+  const t = new Date(new Date(d).getTime() + 3600000);
+  const h = t.getUTCHours(), m = t.getUTCMinutes();
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")}${h < 12 ? "am" : "pm"}`;
+}
+const itemsText = (o) => Array.isArray(o.items) && o.items.length ? o.items.map(i => `${i.qty}× ${i.name}`).join(", ") : "";
 
-  const api = useCallback(async (path, opts = {}) => {
+// What the rider does next on their own job.
+const NEXT = {
+  rider_assigned: { action: "pickup", label: "I've picked it up", note: "Head to the kitchen and collect the order.", tag: "Go to the kitchen" },
+  picked_up: { action: "deliver", label: "Delivered", note: "Take it to the customer and collect payment.", tag: "On the way" }
+};
+
+async function call(path, { token, method = "GET", body } = {}) {
+  try {
     const res = await fetch(API_URL + path, {
-      ...opts,
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(opts.headers || {})
-      }
+      method,
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: body ? JSON.stringify(body) : undefined
     });
     const data = await res.json().catch(() => ({}));
-    return { ok: res.ok, data };
-  }, [token]);
+    return { ok: res.ok, status: res.status, data };
+  } catch {
+    return { ok: false, status: 0, data: { error: "Can't reach Swiftplate. Check your internet and try again." } };
+  }
+}
 
-  const login = async () => {
-    setBusy(true); setError("");
-    const { ok, data } = await api("/api/auth/login", {
-      method: "POST", body: JSON.stringify({ email, password })
-    });
-    setBusy(false);
-    if (!ok) return setError(data.error || "Login failed");
-    if (data.user.role !== "rider") return setError("This app is for riders. Use a rider account.");
-    setToken(data.token); setUser(data.user); setScreen("work");
-  };
+// ============================================================
+export default function App() {
+  const [fontsLoaded, fontError] = useFonts({
+    BricolageGrotesque_400Regular, BricolageGrotesque_500Medium, BricolageGrotesque_600SemiBold,
+    BricolageGrotesque_700Bold, BricolageGrotesque_800ExtraBold
+  });
+  if (!fontsLoaded && !fontError) {
+    return <View style={[s.fill, s.center, { backgroundColor: C.cream }]}><ActivityIndicator color={C.bright} /></View>;
+  }
+  return (
+    <SafeAreaProvider>
+      <StatusBar style="dark" />
+      <Main />
+    </SafeAreaProvider>
+  );
+}
 
-  const load = useCallback(async () => {
-    const { ok, data } = await api("/api/orders");
-    if (ok) {
-      setAvailable(data.available || []);
-      setActive(data.orders || []);
-    }
-  }, [api]);
+function Main() {
+  const [session, setSession] = useState(null);
+  if (!session) return <SignIn onSignedIn={setSession} />;
+  return <Jobs session={session} onSignOut={() => setSession(null)} />;
+}
 
-  useEffect(() => {
-    if (screen !== "work" || !token) return;
-    load();
-    const t = setInterval(load, 5000); // heartbeat
-    return () => clearInterval(t);
-  }, [screen, token, load]);
+// ============================================================
+//  Sign in
+// ============================================================
+function SignIn({ onSignedIn }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(null);
+  const [error, setError] = useState("");
 
-  const act = async (order, action) => {
-    setActingId(order.id); setError("");
-    const { ok, data } = await api(`/api/orders/${order.id}/transition`, {
-      method: "POST", body: JSON.stringify({ action })
-    });
-    setActingId(null);
-    if (!ok) return setError(data.error || "Action failed");
-    if (action === "claim") setTab("active");
-    if (action === "deliver") {
-      setDoneCount(c => c + 1);
-      setDoneKobo(k => k + Number(order.total_kobo));
-    }
-    load();
-  };
-
-  // ======================== LOGIN ========================
-  if (screen === "login") {
-    return (
-      <SafeAreaView style={st.safe}>
-        <View style={[st.wrap, { flex: 1, justifyContent: "center" }]}>
-          <View style={st.logoBadge}>
-            <Ionicons name="bicycle" size={30} color="#fff" />
-          </View>
-          <Text style={st.logo}>Swiftplate <Text style={{ color: RED }}>Rider</Text></Text>
-          <Text style={st.sub}>Deliveries in. Money out. Sign in to ride.</Text>
-          <View style={st.inputRow}>
-            <Ionicons name="mail-outline" size={18} color={DIM} />
-            <TextInput style={st.input} value={email} onChangeText={setEmail}
-              autoCapitalize="none" keyboardType="email-address" placeholder="Email" placeholderTextColor={DIM} />
-          </View>
-          <View style={st.inputRow}>
-            <Ionicons name="lock-closed-outline" size={18} color={DIM} />
-            <TextInput style={st.input} value={password} onChangeText={setPassword}
-              secureTextEntry placeholder="Password" placeholderTextColor={DIM} />
-          </View>
-          <TouchableOpacity style={st.cta} onPress={login} disabled={busy}>
-            {busy ? <ActivityIndicator color="#fff" /> : <Text style={st.ctaTxt}>Start riding</Text>}
-          </TouchableOpacity>
-          {!!error && <Text style={st.err}>{error}</Text>}
-          <Text style={st.hint}>Demo: rider@swiftplate.test · password123</Text>
-        </View>
-      </SafeAreaView>
-    );
+  async function go(kind, creds) {
+    if (kind === "form" && (!creds.email.includes("@") || !creds.password)) { setError("Enter your email and password."); return; }
+    setBusy(kind); setError("");
+    const r = await call("/api/auth/login", { method: "POST", body: { email: creds.email.trim(), password: creds.password } });
+    setBusy(null);
+    if (!r.ok) { setError(r.data.error || "Couldn't sign you in."); return; }
+    if (r.data.user?.role !== "rider") { setError("This app is for riders. Customers, kitchens and admins have their own screens."); return; }
+    onSignedIn({ token: r.data.token, user: r.data.user });
   }
 
-  // ======================== WORK ========================
-  const Stat = ({ icon, value, label }) => (
-    <View style={st.stat}>
-      <Ionicons name={icon} size={16} color={RED} />
-      <Text style={st.statVal}>{value}</Text>
-      <Text style={st.statLbl}>{label}</Text>
-    </View>
-  );
+  return (
+    <SafeAreaView style={[s.fill, { backgroundColor: C.cream }]}>
+      <KeyboardAvoidingView style={s.fill} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <ScrollView contentContainerStyle={s.signWrap} keyboardShouldPersistTaps="handled">
+          <View style={s.signMark}><Ionicons name="bicycle" size={34} color="#fff" /></View>
+          <Text style={s.logo}>swiftplate<Text style={{ color: C.bright }}>.</Text> <Text style={s.logoTag}>Rider</Text></Text>
+          <Text style={s.display}>Take a job.{"\n"}Deliver it hot<Text style={{ color: C.bright }}>.</Text></Text>
+          <Text style={s.lead}>When a kitchen packs an order, it shows up here. Take it, pick it up, drop it off and collect payment.</Text>
 
-  const AddressRow = ({ icon, color, label, value }) => (
-    <View style={st.addr}>
-      <Ionicons name={icon} size={15} color={color} />
-      <View style={{ flex: 1 }}>
-        <Text style={st.addrLbl}>{label}</Text>
-        <Text style={st.addrVal}>{value}</Text>
-      </View>
-    </View>
+          <View style={s.howList}>
+            {[["flash-outline", "First rider to tap gets the job"], ["navigate-outline", "Kitchen and customer address on every job"], ["cash-outline", "See how much to collect before you go"]].map(([icon, text]) => (
+              <View key={text} style={s.howRow}><Ionicons name={icon} size={18} color={C.tomato} /><Text style={s.body}>{text}</Text></View>
+            ))}
+          </View>
+
+          <Btn title={`Continue as ${DEMO.name}`} sub="Demo rider, no sign-up needed" busy={busy === "demo"} disabled={!!busy}
+            onPress={() => go("demo", DEMO)} style={{ marginTop: 22 }} />
+          <Text style={s.or}>or sign in with email</Text>
+          <TextInput style={s.input} value={email} onChangeText={(v) => { setEmail(v); setError(""); }} placeholder="Email"
+            placeholderTextColor={C.muted} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" textContentType="username" />
+          <TextInput style={[s.input, { marginTop: 10 }]} value={password} onChangeText={(v) => { setPassword(v); setError(""); }}
+            placeholder="Password" placeholderTextColor={C.muted} secureTextEntry textContentType="password"
+            onSubmitEditing={() => go("form", { email, password })} />
+          {!!error && <Text style={s.error}>{error}</Text>}
+          <Btn title="Sign in" kind="ghost" busy={busy === "form"} disabled={!!busy} onPress={() => go("form", { email, password })} style={{ marginTop: 12 }} />
+          <Text style={s.fine}>This is a demo. No food is delivered and no money is taken.</Text>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
+}
+
+// ============================================================
+//  Jobs: your delivery, and the ones ready for pickup
+// ============================================================
+function Jobs({ session, onSignOut }) {
+  const { token, user } = session;
+  const [mine, setMine] = useState([]);
+  const [open, setOpen] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState("");
+  const [busyId, setBusyId] = useState(null);
+  const [done, setDone] = useState({ count: 0, kobo: 0 });
+  const [refreshing, setRefreshing] = useState(false);
+  const signOut = useRef(onSignOut);
+  signOut.current = onSignOut;
+
+  const load = useCallback(async () => {
+    const r = await call("/api/orders", { token });
+    if (r.status === 401) { signOut.current(); return; }
+    if (!r.ok) { setError(r.data.error || "Couldn't load jobs."); return; }
+    setMine(r.data.orders || []);
+    setOpen(r.data.available || []);
+    setLoaded(true);
+  }, [token]);
+
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  async function act(o, action) {
+    setBusyId(o.id); setError("");
+    const r = await call(`/api/orders/${o.id}/transition`, { token, method: "POST", body: { action } });
+    setBusyId(null);
+    if (!r.ok) {
+      setError(r.status === 409 && action === "claim" ? "Another rider took that job first." : (r.data.error || "That didn't go through. Try again."));
+    } else if (action === "deliver") {
+      setDone(d => ({ count: d.count + 1, kobo: d.kobo + Number(o.total_kobo) }));
+    }
+    load();
+  }
+
+  const first = user?.full_name?.split(" ")[0] || "there";
 
   return (
-    <SafeAreaView style={st.safe}>
-      <View style={st.header}>
-        <View>
-          <Text style={st.hello}>Hey {user?.full_name?.split(" ")[0]} 🏍️</Text>
-          <Text style={st.online}><View style={st.dot} /> Online · looking for jobs</Text>
+    <SafeAreaView style={[s.fill, { backgroundColor: C.cream }]}>
+      <ScrollView contentContainerStyle={s.page}
+        refreshControl={<RefreshControl tintColor={C.muted} refreshing={refreshing}
+          onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}>
+        <View style={s.topRow}>
+          <Text style={s.logoSmall}>swiftplate<Text style={{ color: C.bright }}>.</Text> <Text style={s.logoTagSmall}>Rider</Text></Text>
+          <Pressable onPress={onSignOut} hitSlop={10} accessibilityRole="button"><Text style={s.link}>Sign out</Text></Pressable>
         </View>
-        <View style={st.statRow}>
-          <Stat icon="checkmark-done" value={doneCount} label="Done" />
-          <Stat icon="wallet" value={naira(doneKobo)} label="Delivered value" />
+
+        <Text style={s.eyebrow}>Hi {first}</Text>
+        <Text style={s.title}>Deliveries</Text>
+        <View style={s.liveRow}><View style={s.liveDot} /><Text style={s.muted}>Live, checks every 5 seconds</Text></View>
+
+        <Text style={[s.meta, { marginTop: 16 }]}>Since you signed in</Text>
+        <View style={s.stats}>
+          <View style={s.stat}><Text style={s.statValue}>{done.count}</Text><Text style={s.muted}>delivered</Text></View>
+          <View style={s.stat}><Text style={s.statValue}>{naira(done.kobo)}</Text><Text style={s.muted}>collected</Text></View>
         </View>
-      </View>
 
-      <View style={st.tabs}>
-        <TouchableOpacity style={[st.tabBtn, tab === "available" && st.tabOn]} onPress={() => setTab("available")}>
-          <Text style={[st.tabTxt, tab === "available" && st.tabTxtOn]}>
-            Available{available.length > 0 ? ` (${available.length})` : ""}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[st.tabBtn, tab === "active" && st.tabOn]} onPress={() => setTab("active")}>
-          <Text style={[st.tabTxt, tab === "active" && st.tabTxtOn]}>
-            My delivery{active.length > 0 ? ` (${active.length})` : ""}
-          </Text>
-        </TouchableOpacity>
-      </View>
+        {!!error && <View style={[s.note, { marginTop: 14 }]}><Text style={[s.body, { color: C.tomato }]}>{error}</Text></View>}
 
-      {!!error && <Text style={st.err}>{error}</Text>}
-
-      <ScrollView
-        contentContainerStyle={st.wrap}
-        refreshControl={<RefreshControl tintColor={DIM} refreshing={refreshing}
-          onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}
-      >
-        {tab === "available" && (
-          available.length === 0 ? (
-            <View style={st.emptyBox}>
-              <Text style={{ fontSize: 40 }}>🛵</Text>
-              <Text style={st.dim}>No jobs right now. New deliveries appear here automatically.</Text>
-            </View>
-          ) : available.map(o => (
-            <View key={o.id} style={st.card}>
-              <View style={st.cardTop}>
-                <Text style={st.cardTitle}>{o.restaurant_name}</Text>
-                <Text style={st.pay}>{naira(o.total_kobo)}</Text>
-              </View>
-              <AddressRow icon="storefront" color={RED} label="PICK UP" value={o.restaurant_address} />
-              <AddressRow icon="location" color={GREEN} label="DELIVER TO" value={o.delivery_address} />
-              <TouchableOpacity style={st.cta} onPress={() => act(o, "claim")} disabled={actingId === o.id}>
-                {actingId === o.id ? <ActivityIndicator color="#fff" /> : <Text style={st.ctaTxt}>Claim this delivery</Text>}
-              </TouchableOpacity>
-            </View>
-          ))
-        )}
-
-        {tab === "active" && (
-          active.length === 0 ? (
-            <View style={st.emptyBox}>
-              <Text style={{ fontSize: 40 }}>😴</Text>
-              <Text style={st.dim}>No active delivery. Claim one from Available.</Text>
-            </View>
-          ) : active.map(o => {
-            const pickedUp = o.status === "picked_up";
-            return (
-              <View key={o.id} style={st.card}>
-                <View style={st.cardTop}>
-                  <Text style={st.cardTitle}>{o.restaurant_name}</Text>
-                  <Text style={st.pay}>{naira(o.total_kobo)}</Text>
+        <Text style={[s.h2, { marginTop: 24 }]}>Your delivery</Text>
+        {!loaded && <ActivityIndicator color={C.bright} style={{ marginTop: 16 }} />}
+        {loaded && mine.length === 0 && <Text style={[s.empty, { marginTop: 8 }]}>You're free. Take a job below.</Text>}
+        {mine.map(o => {
+          const next = NEXT[o.status];
+          return (
+            <View key={o.id} style={[s.job, s.jobMine]}>
+              <View style={s.jobTop}>
+                <Text style={s.ticketId}>#{shortId(o.id)}</Text>
+                <View style={[s.chip, { backgroundColor: o.status === "picked_up" ? C.pepperSoft : C.yolk }]}>
+                  <Text style={[s.chipText, { color: o.status === "picked_up" ? C.pepper : C.ink }]}>{next?.tag || o.status}</Text>
                 </View>
-                <View style={[st.stagePill, pickedUp && { backgroundColor: "#123527" }]}>
-                  <Text style={[st.stageTxt, pickedUp && { color: GREEN }]}>
-                    {pickedUp ? "EN ROUTE TO CUSTOMER" : "HEAD TO RESTAURANT"}
-                  </Text>
-                </View>
-                <AddressRow icon="storefront" color={RED} label="PICK UP" value={o.restaurant_address} />
-                <AddressRow icon="location" color={GREEN} label="DELIVER TO" value={o.delivery_address} />
-                {!pickedUp ? (
-                  <TouchableOpacity style={st.cta} onPress={() => act(o, "pickup")} disabled={actingId === o.id}>
-                    {actingId === o.id ? <ActivityIndicator color="#fff" /> : <Text style={st.ctaTxt}>I've picked up the food</Text>}
-                  </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity style={[st.cta, { backgroundColor: GREEN }]} onPress={() => act(o, "deliver")} disabled={actingId === o.id}>
-                    {actingId === o.id ? <ActivityIndicator color="#fff" /> : <Text style={st.ctaTxt}>Delivered ✓</Text>}
-                  </TouchableOpacity>
-                )}
               </View>
-            );
-          })
-        )}
+              <Route o={o} />
+              {!!itemsText(o) && <Text style={s.body}>{itemsText(o)}</Text>}
+              <View style={s.collect}>
+                <Ionicons name="cash-outline" size={18} color={C.pepper} />
+                <Text style={s.body}><Text style={s.strong}>Collect {naira(o.total_kobo)}</Text> from the customer</Text>
+              </View>
+              {!!next && <Text style={s.muted}>{next.note}</Text>}
+              {!!next && (
+                <Btn title={busyId === o.id ? "Saving..." : next.label} busy={busyId === o.id} disabled={busyId === o.id}
+                  kind={o.status === "picked_up" ? "green" : "primary"} onPress={() => act(o, next.action)} style={{ marginTop: 6 }} />
+              )}
+            </View>
+          );
+        })}
+
+        <View style={[s.secHead, { marginTop: 26 }]}>
+          <Text style={s.h2}>Ready for pickup</Text>
+          <Text style={[s.h2, { color: C.muted, fontFamily: F.medium }]}>{open.length}</Text>
+        </View>
+        {loaded && open.length === 0 && <Text style={s.empty}>No jobs right now. When a kitchen marks food ready, it shows up here.</Text>}
+        {open.map(o => (
+          <View key={o.id} style={s.job}>
+            <View style={s.jobTop}>
+              <Text style={s.ticketId}>#{shortId(o.id)}</Text>
+              <Text style={s.meta}>Ready since {lagosTime(o.updated_at || o.created_at)}</Text>
+            </View>
+            <Route o={o} />
+            {!!itemsText(o) && <Text style={s.body}>{itemsText(o)}</Text>}
+            <Text style={s.muted}>Collect {naira(o.total_kobo)} on delivery</Text>
+            <Btn title={busyId === o.id ? "Taking it..." : "Take this job"} kind="ink" busy={busyId === o.id}
+              disabled={!!busyId} onPress={() => act(o, "claim")} style={{ marginTop: 6 }} />
+          </View>
+        ))}
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-const st = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: BG },
-  wrap: { padding: 18, paddingBottom: 50 },
-  logoBadge: { width: 62, height: 62, borderRadius: 18, backgroundColor: RED, alignItems: "center", justifyContent: "center", marginBottom: 16 },
-  logo: { fontSize: 30, fontWeight: "900", color: TXT },
-  sub: { color: DIM, marginTop: 6, marginBottom: 18 },
-  inputRow: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderColor: LINE, backgroundColor: CARD, borderRadius: 14, paddingHorizontal: 14, marginTop: 12 },
-  input: { flex: 1, paddingVertical: 13, fontSize: 15, color: TXT },
-  cta: { backgroundColor: RED, borderRadius: 999, padding: 15, alignItems: "center", marginTop: 14 },
-  ctaTxt: { color: "#fff", fontWeight: "800", fontSize: 14.5 },
-  err: { color: "#ff7a68", marginTop: 8, textAlign: "center", paddingHorizontal: 16 },
-  hint: { color: DIM, fontSize: 12.5, textAlign: "center", marginTop: 14 },
-  dim: { color: DIM, fontSize: 13.5, textAlign: "center", marginTop: 6 },
+function Route({ o }) {
+  return (
+    <View style={s.route}>
+      <View style={s.stop}>
+        <View style={s.stopRail}><View style={[s.stopDot, { backgroundColor: C.bright }]} /><View style={s.stopLine} /></View>
+        <View style={{ flex: 1, paddingBottom: 12 }}>
+          <Text style={s.stopLabel}>PICK UP</Text>
+          <Text style={s.h4}>{o.restaurant_name}</Text>
+          {!!o.restaurant_address && <Text style={s.muted}>{o.restaurant_address}</Text>}
+        </View>
+      </View>
+      <View style={s.stop}>
+        <View style={s.stopRail}><View style={[s.stopDot, { backgroundColor: C.pepper }]} /></View>
+        <View style={{ flex: 1 }}>
+          <Text style={s.stopLabel}>DROP OFF</Text>
+          <Text style={s.h4}>{o.delivery_address}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
 
-  header: { paddingHorizontal: 18, paddingTop: 10, paddingBottom: 14, gap: 12 },
-  hello: { color: TXT, fontSize: 20, fontWeight: "800" },
-  online: { color: DIM, fontSize: 12.5, marginTop: 3 },
-  dot: { width: 7, height: 7, borderRadius: 99, backgroundColor: GREEN, marginRight: 6 },
-  statRow: { flexDirection: "row", gap: 10 },
-  stat: { flex: 1, flexDirection: "row", alignItems: "center", gap: 7, backgroundColor: CARD, borderWidth: 1, borderColor: LINE, borderRadius: 14, padding: 12 },
-  statVal: { color: TXT, fontWeight: "800", fontSize: 14 },
-  statLbl: { color: DIM, fontSize: 11.5 },
+function Btn({ title, sub, onPress, kind = "primary", busy, disabled, style }) {
+  const bg = { primary: C.bright, ink: C.ink, green: C.pepper, ghost: "transparent" }[kind];
+  const fg = kind === "ghost" ? C.ink : "#fff";
+  return (
+    <Pressable onPress={onPress} disabled={disabled} accessibilityRole="button"
+      style={({ pressed }) => [s.btn, { backgroundColor: bg }, kind === "ghost" && { borderWidth: 1.5, borderColor: C.ink },
+        disabled && !busy && { opacity: 0.45 }, pressed && s.pressed, style]}>
+      {busy ? <ActivityIndicator color={fg} /> : (
+        <View style={{ alignItems: "center" }}>
+          <Text style={[s.btnText, { color: fg }]}>{title}</Text>
+          {!!sub && <Text style={[s.btnSub, { color: fg }]}>{sub}</Text>}
+        </View>
+      )}
+    </Pressable>
+  );
+}
 
-  tabs: { flexDirection: "row", marginHorizontal: 18, backgroundColor: CARD, borderRadius: 999, padding: 4, borderWidth: 1, borderColor: LINE },
-  tabBtn: { flex: 1, paddingVertical: 9, borderRadius: 999, alignItems: "center" },
-  tabOn: { backgroundColor: RED },
-  tabTxt: { color: DIM, fontWeight: "700", fontSize: 13 },
-  tabTxtOn: { color: "#fff" },
+// ============================================================
+const s = StyleSheet.create({
+  fill: { flex: 1 },
+  center: { alignItems: "center", justifyContent: "center" },
+  page: { padding: 20, paddingBottom: 48 },
+  pressed: { opacity: 0.85, transform: [{ scale: 0.985 }] },
 
-  card: { backgroundColor: CARD, borderWidth: 1, borderColor: LINE, borderRadius: 18, padding: 16, marginBottom: 14 },
-  cardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
-  cardTitle: { color: TXT, fontSize: 16, fontWeight: "800" },
-  pay: { color: TXT, fontWeight: "800", fontSize: 15 },
-  stagePill: { alignSelf: "flex-start", backgroundColor: "#3a1712", borderRadius: 999, paddingVertical: 5, paddingHorizontal: 12, marginBottom: 10 },
-  stageTxt: { color: "#ff8a75", fontSize: 10.5, fontWeight: "800", letterSpacing: 1 },
-  addr: { flexDirection: "row", gap: 10, alignItems: "flex-start", marginTop: 8 },
-  addrLbl: { color: DIM, fontSize: 10, letterSpacing: 1.2, fontWeight: "800" },
-  addrVal: { color: TXT, fontSize: 13.5, marginTop: 1 },
-  emptyBox: { alignItems: "center", gap: 8, paddingVertical: 60, paddingHorizontal: 30 }
+  signWrap: { padding: 22, paddingTop: 34, paddingBottom: 36 },
+  signMark: { width: 64, height: 64, borderRadius: 20, backgroundColor: C.bright, alignItems: "center", justifyContent: "center" },
+  logo: { fontFamily: F.black, fontSize: 22, color: C.ink, marginTop: 18, letterSpacing: -0.5 },
+  logoTag: { fontFamily: F.semi, fontSize: 16, color: C.muted, letterSpacing: 0 },
+  logoSmall: { fontFamily: F.black, fontSize: 19, color: C.ink, letterSpacing: -0.4 },
+  logoTagSmall: { fontFamily: F.semi, fontSize: 14, color: C.muted, letterSpacing: 0 },
+  display: { fontFamily: F.black, fontSize: 42, lineHeight: 43, color: C.ink, marginTop: 10, letterSpacing: -1.5 },
+  title: { fontFamily: F.bold, fontSize: 31, lineHeight: 33, color: C.ink, letterSpacing: -1, marginTop: 2 },
+  h2: { fontFamily: F.bold, fontSize: 21, color: C.ink, letterSpacing: -0.4 },
+  h4: { fontFamily: F.semi, fontSize: 16, color: C.ink },
+  lead: { fontFamily: F.regular, fontSize: 16.5, lineHeight: 24, color: C.muted, marginTop: 10 },
+  body: { fontFamily: F.regular, fontSize: 15, lineHeight: 21, color: C.ink },
+  strong: { fontFamily: F.bold },
+  muted: { fontFamily: F.regular, fontSize: 14, lineHeight: 20, color: C.muted },
+  meta: { fontFamily: F.regular, fontSize: 13.5, color: C.muted },
+  empty: { fontFamily: F.regular, fontSize: 15, lineHeight: 21, color: C.muted, backgroundColor: C.soft, borderRadius: 16, padding: 14 },
+  eyebrow: { fontFamily: F.semi, fontSize: 13.5, color: C.tomato, marginTop: 6 },
+  link: { fontFamily: F.semi, fontSize: 14.5, color: C.ink, textDecorationLine: "underline" },
+  error: { fontFamily: F.medium, fontSize: 14, color: C.tomato, marginTop: 10 },
+  fine: { fontFamily: F.regular, fontSize: 12.5, color: C.muted, textAlign: "center", marginTop: 18 },
+  or: { fontFamily: F.medium, fontSize: 13.5, color: C.muted, textAlign: "center", marginTop: 22, marginBottom: 10 },
+
+  howList: { marginTop: 18, gap: 10 },
+  howRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+
+  input: {
+    fontFamily: F.regular, fontSize: 16, color: C.ink, backgroundColor: C.card, borderWidth: 1.5, borderColor: C.line,
+    borderRadius: 14, paddingHorizontal: 15, paddingVertical: Platform.OS === "ios" ? 14 : 11
+  },
+  btn: { minHeight: 54, borderRadius: 999, alignItems: "center", justifyContent: "center", paddingHorizontal: 22, paddingVertical: 8 },
+  btnText: { fontFamily: F.semi, fontSize: 16 },
+  btnSub: { fontFamily: F.regular, fontSize: 12.5, opacity: 0.85, marginTop: 1 },
+
+  topRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 14 },
+  liveRow: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 6 },
+  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.pepper },
+  stats: { flexDirection: "row", gap: 10, marginTop: 8 },
+  stat: { flex: 1, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 18, padding: 14 },
+  statValue: { fontFamily: F.bold, fontSize: 22, color: C.ink, letterSpacing: -0.5 },
+  note: { backgroundColor: C.yolkSoft, borderRadius: 16, padding: 14 },
+  secHead: { flexDirection: "row", alignItems: "baseline", gap: 8, marginBottom: 8 },
+
+  job: { backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 20, padding: 16, gap: 10, marginTop: 10 },
+  jobMine: { borderWidth: 2, borderColor: C.ink },
+  jobTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  ticketId: { fontFamily: F.bold, fontSize: 15, color: C.ink, letterSpacing: 0.3 },
+  chip: { flexDirection: "row", alignItems: "center", height: 28, paddingHorizontal: 11, borderRadius: 999, backgroundColor: C.soft },
+  chipText: { fontFamily: F.semi, fontSize: 12.5, color: C.ink },
+  collect: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: C.pepperSoft, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12 },
+
+  route: { backgroundColor: C.cream, borderRadius: 14, padding: 12 },
+  stop: { flexDirection: "row", gap: 10 },
+  stopRail: { width: 14, alignItems: "center", paddingTop: 4 },
+  stopDot: { width: 12, height: 12, borderRadius: 6 },
+  stopLine: { flex: 1, width: 2, backgroundColor: C.line, marginTop: 3 },
+  stopLabel: { fontFamily: F.semi, fontSize: 11, letterSpacing: 1, color: C.muted }
 });
