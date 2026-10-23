@@ -1,17 +1,21 @@
 // The central endpoints of the platform.
-// POST: a CUSTOMER places an order (status starts at 'pending').
+// POST: a CUSTOMER places an order (status starts at 'pending') and gets a
+//       Paystack checkout link. The kitchen only sees it once it's paid.
 // GET:  each role sees a different slice of the same orders table:
 //       customer -> their own, vendor -> their restaurant's,
 //       rider -> assigned to them (+ ready ones available to claim),
 //       admin -> use /api/admin/orders for everything.
 import { requireDb } from "../../../lib/db";
 import { requireAuth, authError } from "../../../lib/auth";
+import { paymentsReady, siteOrigin, startPayment } from "../../../lib/payments";
 
 const DELIVERY_FEE_KOBO = 100000; // flat N1,000 for the demo
 
 export async function POST(req) {
   try {
     const user = await requireAuth(req, ["customer"]);
+    if (!paymentsReady())
+      return Response.json({ error: "Payments aren't switched on yet, so orders can't be placed. (The site needs its Paystack key.)" }, { status: 503 });
     const { restaurant_id, items, delivery_address } = await req.json();
     if (!restaurant_id || !Array.isArray(items) || !items.length || !delivery_address)
       return Response.json({ error: "restaurant_id, items and delivery_address are required." }, { status: 400 });
@@ -40,12 +44,21 @@ export async function POST(req) {
     }
     const total = subtotal + DELIVERY_FEE_KOBO;
 
+    // The order and its unpaid payment row go in together, in one statement,
+    // so there's never an order without one (the kitchen can't see it until
+    // the payment says 'paid').
     const [order] = await sql`
-      INSERT INTO orders (customer_id, restaurant_id, status, delivery_address,
-                          subtotal_kobo, delivery_fee_kobo, total_kobo)
-      VALUES (${user.sub}, ${restaurant_id}, 'pending', ${delivery_address},
-              ${subtotal}, ${DELIVERY_FEE_KOBO}, ${total})
-      RETURNING *
+      WITH o AS (
+        INSERT INTO orders (customer_id, restaurant_id, status, delivery_address,
+                            subtotal_kobo, delivery_fee_kobo, total_kobo)
+        VALUES (${user.sub}, ${restaurant_id}, 'pending', ${delivery_address},
+                ${subtotal}, ${DELIVERY_FEE_KOBO}, ${total})
+        RETURNING *
+      ), p AS (
+        INSERT INTO payments (order_id, amount_kobo, provider, status)
+        SELECT id, total_kobo, 'paystack', 'initiated' FROM o
+      )
+      SELECT * FROM o
     `;
 
     // Snapshot pattern: copy name + price into the order lines.
@@ -60,7 +73,15 @@ export async function POST(req) {
       VALUES (${order.id}, 'pending', ${user.sub})
     `;
 
-    return Response.json({ order });
+    // Paystack checkout. If it fails the order is still saved (unpaid, so the
+    // kitchen can't see it) and the customer can try again from its page.
+    const [me] = await sql`SELECT email FROM users WHERE id = ${user.sub}`;
+    try {
+      const payment = await startPayment(sql, { order, email: me.email, origin: siteOrigin(req) });
+      return Response.json({ order, payment });
+    } catch (e) {
+      return Response.json({ order, payment_error: e.message || "Couldn't start the payment." });
+    }
   } catch (e) {
     return e.status ? authError(e) : Response.json({ error: e.message }, { status: 500 });
   }
@@ -73,8 +94,9 @@ export async function GET(req) {
 
     if (user.role === "customer") {
       const orders = await sql`
-        SELECT o.*, r.name AS restaurant_name FROM orders o
+        SELECT o.*, r.name AS restaurant_name, p.status AS payment_status FROM orders o
         JOIN restaurants r ON r.id = o.restaurant_id
+        LEFT JOIN payments p ON p.order_id = o.id
         WHERE o.customer_id = ${user.sub} ORDER BY o.created_at DESC LIMIT 20
       `;
       return Response.json({ orders });
@@ -91,7 +113,9 @@ export async function GET(req) {
         JOIN restaurants r ON r.id = o.restaurant_id
         JOIN users u ON u.id = o.customer_id
         LEFT JOIN users d ON d.id = o.rider_id
-        WHERE r.owner_id = ${user.sub} ORDER BY o.created_at DESC LIMIT 30
+        WHERE r.owner_id = ${user.sub}
+          AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.order_id = o.id AND p.status IN ('initiated', 'failed'))
+        ORDER BY o.created_at DESC LIMIT 30
       `;
       return Response.json({ orders });
     }
@@ -114,6 +138,7 @@ export async function GET(req) {
         FROM orders o
         JOIN restaurants r ON r.id = o.restaurant_id
         WHERE o.status = 'ready' AND o.rider_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.order_id = o.id AND p.status IN ('initiated', 'failed'))
         ORDER BY o.created_at ASC
       `;
       return Response.json({ orders: assigned, available });

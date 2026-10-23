@@ -10,6 +10,9 @@
 // vendor who OWNS this order's restaurant. Same for riders.
 import { requireDb } from "../../../../../lib/db";
 import { requireAuth, authError } from "../../../../../lib/auth";
+import { refundPayment } from "../../../../../lib/payments";
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const TRANSITIONS = {
   accept:    { role: "vendor", from: ["pending"],        to: "accepted" },
@@ -28,6 +31,7 @@ export async function POST(req, { params }) {
     const t = TRANSITIONS[action];
     if (!t) return Response.json({ error: `Unknown action: ${action}` }, { status: 400 });
 
+    if (!UUID.test(String(params.id))) return Response.json({ error: "Order not found." }, { status: 404 });
     const sql = requireDb();
     const [order] = await sql`SELECT * FROM orders WHERE id = ${params.id}`;
     if (!order) return Response.json({ error: "Order not found." }, { status: 404 });
@@ -58,6 +62,12 @@ export async function POST(req, { params }) {
         if (rest.owner_id !== user.sub)
           return Response.json({ error: "This order belongs to another vendor's restaurant." }, { status: 403 });
       }
+      // The kitchen can't start on an order nobody has paid for.
+      if (action === "accept") {
+        const [pay] = await sql`SELECT status FROM payments WHERE order_id = ${order.id}`;
+        if (pay && pay.status !== "paid")
+          return Response.json({ error: "This order isn't paid yet." }, { status: 409 });
+      }
       if (action === "claim" && order.rider_id)
         return Response.json({ error: "Another rider already claimed this order." }, { status: 409 });
       if (["pickup", "deliver"].includes(action) && user.role === "rider" && order.rider_id !== user.sub)
@@ -85,7 +95,9 @@ export async function POST(req, { params }) {
       INSERT INTO order_status_history (order_id, status, changed_by)
       VALUES (${order.id}, ${t.to}, ${user.sub})
     `;
-    return Response.json({ order: updated, moved: `${order.status} -> ${t.to}`, by: user.role });
+    // A paid order that gets cancelled gets its money back.
+    const refund = action === "cancel" ? await refundPayment(sql, order.id) : null;
+    return Response.json({ order: updated, moved: `${order.status} -> ${t.to}`, by: user.role, refunded: refund?.refunded || false });
   } catch (e) {
     return e.status ? authError(e) : Response.json({ error: e.message }, { status: 500 });
   }

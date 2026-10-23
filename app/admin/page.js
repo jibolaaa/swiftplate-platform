@@ -1,14 +1,17 @@
 "use client";
 // ADMIN SCREEN: every order on the platform, who handled it, and the money.
-// Same 5 second check as the other screens.
+// Same 5 second check as the other screens. Orders that haven't been paid
+// for yet are marked, and don't count as in progress.
 import { useCallback, useEffect, useState } from "react";
 import AppFrame, { useRoleGate } from "../../components/AppFrame";
 import { api } from "../../lib/clientApi";
 import { STATUS_LABEL, lagosTime, naira, shortId } from "../../lib/food";
 
+const unpaid = (o) => ["initiated", "failed"].includes(o.payment_status) && o.status !== "cancelled";
 const FILTERS = [
   ["all", "All", () => true],
-  ["active", "In progress", o => !["delivered", "cancelled"].includes(o.status)],
+  ["active", "In progress", o => !["delivered", "cancelled"].includes(o.status) && !unpaid(o)],
+  ["unpaid", "Waiting for payment", unpaid],
   ["delivered", "Delivered", o => o.status === "delivered"],
   ["cancelled", "Cancelled", o => o.status === "cancelled"]
 ];
@@ -35,7 +38,7 @@ export default function AdminPage() {
     return () => clearInterval(t);
   }, [session, load]);
 
-  const active = orders.filter(o => !["delivered", "cancelled"].includes(o.status)).length;
+  const active = orders.filter(o => !["delivered", "cancelled"].includes(o.status) && !unpaid(o)).length;
   const test = FILTERS.find(f => f[0] === show)[2];
   const shown = orders.filter(test);
 
@@ -46,7 +49,6 @@ export default function AdminPage() {
           <h1 className="title">Overview</h1>
           <p className="muted">Every order on Swiftplate, newest first.</p>
         </div>
-        <span className="live">Live, checks every 5 seconds</span>
       </div>
       {error && <p className="error" role="alert" style={{ marginBottom: 14 }}>{error}</p>}
       <div className="stats">
@@ -68,11 +70,11 @@ export default function AdminPage() {
               {shown.map(o => (
                 <tr key={o.id}>
                   <td><b>#{shortId(o.id)}</b></td>
-                  <td><span className={`status s-${o.status}`}>{STATUS_LABEL[o.status]}</span></td>
+                  <td>{unpaid(o) ? <span className="status s-unpaid">Waiting for payment</span> : <span className={`status s-${o.status}`}>{STATUS_LABEL[o.status]}</span>}</td>
                   <td>{o.restaurant}</td>
                   <td className="hide-sm">{o.customer}</td>
                   <td className="hide-sm">{o.rider || <span className="muted">None yet</span>}</td>
-                  <td className="muted">{lagosTime(o.created_at)}</td>
+                  <td className="muted when">{lagosTime(o.created_at)}</td>
                   <td className="num"><b>{naira(o.total_kobo)}</b></td>
                 </tr>
               ))}

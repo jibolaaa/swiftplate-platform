@@ -9,7 +9,7 @@ export const metadata = {
 };
 
 const FLOW = [
-  ["pending", "Customer", "Places the order. Prices come from the database, not the phone."],
+  ["pending", "Customer", "Places the order and pays on Paystack, by card or transfer. Prices come from the database, not the phone, and the kitchen can't see the order until the payment is confirmed."],
   ["accepted", "Kitchen", "Accepts it."],
   ["preparing", "Kitchen", "Starts cooking."],
   ["ready", "Kitchen", "Marks it packed and ready."],
@@ -26,10 +26,12 @@ const FACTS = [
   ["A full history of every order", "Each status change is logged with who made it and when. The tracking page and the admin read from that log."],
   ["No double claims", "A status change only applies if the order is still where it was checked. Two riders tapping at once can't both get the job."],
   ["Near-live updates", "Every screen checks for changes every 5 seconds. Swapping in a realtime service (like Pusher or Supabase Realtime) is the upgrade path, since plain WebSockets don't suit Vercel's serverless functions."],
+  ["Paid before it's cooked", "An order only reaches the kitchen once the server has asked Paystack itself whether the money arrived, and checked the amount. Cancel before the kitchen accepts and the money goes back."],
+  ["When will it arrive?", "The tracking page estimates the arrival time from how long each step usually takes, and draws where the food is: at the kitchen, with the rider, on the road."],
   ["Safe passwords", "Passwords are stored as bcrypt hashes. A wrong email and a wrong password get the same reply, so nobody can fish for accounts."]
 ];
 
-const STACK = ["Next.js 14", "React", "React Native (Expo)", "PostgreSQL on Neon", "JWT (jose)", "bcrypt", "Vercel"];
+const STACK = ["Next.js 14", "React", "React Native (Expo)", "PostgreSQL on Neon", "Paystack", "JWT (jose)", "bcrypt", "Vercel"];
 
 export default function PlatformPage() {
   return (

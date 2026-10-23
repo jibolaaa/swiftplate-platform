@@ -7,14 +7,14 @@ export default function SiteFooter() {
       <div className="wrap">
         <div style={{ display: "grid", gap: 10, alignContent: "start" }}>
           <Logo />
-          <p className="small" style={{ color: "#cdbfb0", maxWidth: "26em" }}>Hot food from Lagos kitchens. Order, follow every step, pay the rider when it arrives.</p>
+          <p className="small" style={{ color: "#cdbfb0", maxWidth: "26em" }}>Hot food from Lagos kitchens. Order, pay by card or transfer, and follow it to your door.</p>
         </div>
         <div className="foot-cols">
           <nav aria-label="Order">
             <b>Order</b>
-            <Link href="/#kitchens">Kitchens</Link>
+            <Link href="/kitchens">Kitchens</Link>
             <Link href="/orders">Your orders</Link>
-            <Link href="/checkout">Your bag</Link>
+            <Link href="/checkout">Checkout</Link>
           </nav>
           <nav aria-label="Work with Swiftplate">
             <b>Partners</b>
@@ -30,7 +30,7 @@ export default function SiteFooter() {
           </nav>
         </div>
         <p className="foot-note">
-          Swiftplate is a demo platform by <a href="https://ibrahimraji.vercel.app" target="_blank" rel="noopener noreferrer">Raji Ibrahim Ajibola</a>. The kitchens and orders are for testing; no food is delivered and no money is taken.
+          Swiftplate is a demo platform by <a href="https://ibrahimraji.vercel.app" target="_blank" rel="noopener noreferrer">Raji Ibrahim Ajibola</a>. The kitchens and orders are for testing; payments run in Paystack test mode, so no food is delivered and no real money is taken.
         </p>
       </div>
     </footer>

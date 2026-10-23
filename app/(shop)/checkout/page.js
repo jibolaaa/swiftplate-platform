@@ -1,12 +1,16 @@
 "use client";
-// Checkout: check the order, add an address, sign in if needed, send it.
-// The server works out the real prices and total; the numbers here are a preview.
+// Checkout: check the order, add an address, sign in if needed, then pay.
+// Paying opens Paystack (card or bank transfer). The order only reaches the
+// kitchen once Paystack confirms the money, so tapping a button by mistake
+// never sends food anywhere. The server works out the real prices and total;
+// the numbers here are a preview.
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCart } from "../../../components/CartProvider";
 import { Lines, Totals } from "../../../components/OrderSummary";
 import { ArrowLeft } from "../../../components/Icons";
+import TestCard from "../../../components/TestCard";
 import { api, getSession, signIn } from "../../../lib/clientApi";
 import { DEMO_PASSWORD, DEMO_PEOPLE } from "../../../lib/roles";
 import { naira } from "../../../lib/food";
@@ -20,6 +24,11 @@ export default function CheckoutPage() {
   const [address, setAddress] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Right after signing in, the Pay button appears where the sign-in button
+  // was. Hold it for a moment so a double tap can't press both.
+  const [settling, setSettling] = useState(false);
+  const settleTimer = useRef(null);
+  useEffect(() => () => clearTimeout(settleTimer.current), []);
 
   useEffect(() => {
     const read = () => setMe(getSession("customer")?.user || null);
@@ -37,7 +46,7 @@ export default function CheckoutPage() {
         <div className="empty">
           <h1 className="title">Your order is empty</h1>
           <p className="muted">Pick a kitchen and tap + on anything you fancy.</p>
-          <Link href="/#kitchens" className="btn">See kitchens</Link>
+          <Link href="/kitchens" className="btn">See kitchens</Link>
         </div>
       </div>
     );
@@ -48,11 +57,13 @@ export default function CheckoutPage() {
     setError("");
     const r = await signIn(DEMO_CUSTOMER.email, DEMO_PASSWORD);
     setBusy(false);
-    if (!r.ok) setError(r.data.error || "Couldn't sign in. Try again.");
+    if (!r.ok) { setError(r.data.error || "Couldn't sign in. Try again."); return; }
+    setSettling(true);
+    settleTimer.current = setTimeout(() => setSettling(false), 900);
   }
 
-  async function place() {
-    if (busy) return;
+  async function pay() {
+    if (busy || settling) return;
     const where = address.trim();
     if (where.length < 8) { setError("Add a delivery address with the street and area, like 5 Sabo Road, Yaba."); return; }
     setBusy(true);
@@ -66,11 +77,13 @@ export default function CheckoutPage() {
         delivery_address: where
       })
     });
-    if (r.status === 401) { setBusy(false); setError("Your sign-in ran out. Sign in again to send the order."); return; }
-    if (!r.ok) { setBusy(false); setError(r.data.error || "The order didn't go through. Try again."); return; }
+    if (r.status === 401) { setBusy(false); setError("Your sign-in ran out. Sign in again to pay."); return; }
+    if (!r.ok) { setBusy(false); setError(r.data.error || "That didn't go through. Try again."); return; }
     try { localStorage.setItem("swiftplate_address", where); } catch {}
     cart.clear();
-    router.push(`/orders/${r.data.order.id}`);
+    // Off to Paystack. If it couldn't start, the order page has a Pay button.
+    if (r.data.payment?.url) window.location.assign(r.data.payment.url);
+    else router.push(`/orders/${r.data.order.id}?pay=failed`);
   }
 
   return (
@@ -96,8 +109,8 @@ export default function CheckoutPage() {
           </section>
           <section className="card" aria-labelledby="p-title">
             <h2 id="p-title">Payment</h2>
-            <p>Pay the rider when your food arrives, by cash or transfer.</p>
-            <p className="muted small">This is a demo, so no money changes hands.</p>
+            <p>Pay now by card or bank transfer. Paystack handles the payment, and the kitchen starts on your order once it's paid.</p>
+            <TestCard />
           </section>
         </div>
         <aside className="card" aria-label="Order total" style={{ position: "sticky", top: "calc(var(--header-h) + 16px)" }}>
@@ -107,7 +120,8 @@ export default function CheckoutPage() {
           {me ? (
             <>
               <p className="muted small">Ordering as {me.full_name}.</p>
-              <button type="button" className="btn full" onClick={place} disabled={busy}>{busy ? "Sending your order…" : `Place order, ${naira(cart.total)}`}</button>
+              <button type="button" className="btn full" onClick={pay} disabled={busy || settling}>{busy ? "Opening Paystack…" : `Pay ${naira(cart.total)}`}</button>
+              <p className="muted small">You'll pay on Paystack's secure page, then come straight back here.</p>
             </>
           ) : (
             <>

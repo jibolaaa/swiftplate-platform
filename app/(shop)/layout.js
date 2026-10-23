@@ -8,8 +8,7 @@ export default function ShopLayout({ children }) {
     <CartProvider>
       <div className="ribbon">
         <div className="wrap">
-          <span>A working demo: order something, then run the kitchen and rider side yourself.</span>
-          <a href="/platform">See how it works</a>
+          <span>A working demo. Payments run in Paystack test mode, so no real money moves.</span>
         </div>
       </div>
       <SiteHeader />

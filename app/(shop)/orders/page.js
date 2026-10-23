@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, getSession } from "../../../lib/clientApi";
-import { STATUS_LABEL, lagosTime, naira, shortId } from "../../../lib/food";
+import { STATUS_LABEL, lagosWhen, naira, shortId } from "../../../lib/food";
 
 export default function OrdersPage() {
   const [state, setState] = useState({ step: "loading", orders: [] });
@@ -35,7 +35,7 @@ export default function OrdersPage() {
       {state.step === "ready" && state.orders.length === 0 && (
         <div className="empty">
           <p className="muted">No orders yet.</p>
-          <Link href="/#kitchens" className="btn">Find something to eat</Link>
+          <Link href="/kitchens" className="btn">Find something to eat</Link>
         </div>
       )}
       {state.orders.length > 0 && (
@@ -45,11 +45,13 @@ export default function OrdersPage() {
               <Link href={`/orders/${o.id}`} className="orow">
                 <span>
                   <b>{o.restaurant_name}</b>
-                  <span className="meta" style={{ display: "block" }}>#{shortId(o.id)} · {lagosTime(o.created_at)}</span>
+                  <span className="meta" style={{ display: "block" }}>#{shortId(o.id)} · {lagosWhen(o.created_at)}</span>
                 </span>
                 <span style={{ display: "grid", justifyItems: "end", gap: 6 }}>
                   <b className="price" style={{ fontSize: 16 }}>{naira(o.total_kobo)}</b>
-                  <span className={`status s-${o.status}`}>{STATUS_LABEL[o.status] || o.status}</span>
+                  {["initiated", "failed"].includes(o.payment_status) && o.status !== "cancelled"
+                    ? <span className="status s-unpaid">Waiting for payment</span>
+                    : <span className={`status s-${o.status}`}>{o.status === "pending" ? "Paid" : STATUS_LABEL[o.status] || o.status}</span>}
                 </span>
               </Link>
             </li>

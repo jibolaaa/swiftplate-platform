@@ -3,16 +3,19 @@
 // The kitchen's orders as a board: new, cooking, waiting for a rider, done.
 // It checks for changes every 5 seconds. Each ticket only offers the next
 // step the server's state machine allows, so the screen can't skip one.
+// After each step the ticket shows a tick for a second, so you can see it
+// went through, then moves to its next column. Only paid orders show up.
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import AppFrame, { useRoleGate } from "../../components/AppFrame";
+import DoneFlash from "../../components/DoneFlash";
 import { api } from "../../lib/clientApi";
 import { STATUS_LABEL, lagosTime, naira, shortId } from "../../lib/food";
 
 const NEXT = {
-  pending: { action: "accept", label: "Accept order" },
-  accepted: { action: "preparing", label: "Start cooking" },
-  preparing: { action: "ready", label: "Food is ready" }
+  pending: { action: "accept", label: "Accept order", done: "Accepted" },
+  accepted: { action: "preparing", label: "Start cooking", done: "Cooking started" },
+  preparing: { action: "ready", label: "Food is ready", done: "Ready for pickup" }
 };
 const COLUMNS = [
   { key: "new", title: "New", match: ["pending"], empty: "No new orders. They pop up here by themselves." },
@@ -27,6 +30,7 @@ export default function KitchenPage() {
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState(null);
   const [fresh, setFresh] = useState(new Set());
+  const [flash, setFlash] = useState(null); // { order, label } while the tick shows
   const seen = useRef(null);
 
   const load = useCallback(async () => {
@@ -55,26 +59,30 @@ export default function KitchenPage() {
   async function act(o) {
     const step = NEXT[o.status];
     setBusyId(o.id);
+    setError("");
     const r = await api(`/api/orders/${o.id}/transition`, { role: "vendor", method: "POST", body: JSON.stringify({ action: step.action }) });
     setBusyId(null);
-    if (!r.ok) setError(r.data.error || "That didn't go through. Try again.");
     setFresh(f => { const n = new Set(f); n.delete(o.id); return n; });
-    load();
+    if (!r.ok) { setError(r.data.error || "That didn't go through. Try again."); load(); return; }
+    setFlash({ order: o, label: step.done });
+    setTimeout(() => { setFlash(null); load(); }, 1200);
   }
+
+  // While the tick shows, keep the ticket where it was.
+  const board = flash ? orders.map(o => (o.id === flash.order.id ? flash.order : o)) : orders;
 
   return (
     <AppFrame role="vendor" session={session}>
       <div className="app-head">
         <div>
           <h1 className="title">Kitchen orders</h1>
-          <p className="muted">{orders.length ? `${orders.length} recent ${orders.length === 1 ? "order" : "orders"}.` : "No orders yet."} <Link href="/" className="link" target="_blank">Place a test order</Link></p>
+          <p className="muted">{orders.length ? `${orders.length} recent ${orders.length === 1 ? "order" : "orders"}.` : "No orders yet."} <Link href="/kitchens" className="link" target="_blank">Place a test order</Link></p>
         </div>
-        <span className="live">Live, checks every 5 seconds</span>
       </div>
       {error && <p className="error" role="alert" style={{ marginBottom: 14 }}>{error}</p>}
       <div className="board">
         {COLUMNS.map(col => {
-          const list = orders.filter(o => col.match.includes(o.status));
+          const list = board.filter(o => col.match.includes(o.status));
           const shown = col.key === "done" ? list.slice(0, 8) : list;
           return (
             <section key={col.key} className={`col ${col.key}`} aria-label={col.title}>
@@ -91,6 +99,7 @@ export default function KitchenPage() {
                 </div>
               ) : shown.map(o => (
                 <article key={o.id} className={`ticket ${fresh.has(o.id) ? "fresh" : ""}`}>
+                  {flash?.order.id === o.id && <DoneFlash label={flash.label} />}
                   <div className="ticket-top">
                     <span className="ticket-id">#{shortId(o.id)}</span>
                     <span className={`status s-${o.status}`}>{fresh.has(o.id) ? "Just in" : STATUS_LABEL[o.status]}</span>
@@ -105,7 +114,7 @@ export default function KitchenPage() {
                     {o.status === "ready" && <span>Packed. Finding a rider…</span>}
                   </div>
                   {NEXT[o.status] && (
-                    <button type="button" className={`btn ${o.status === "pending" ? "" : "ink"}`} disabled={busyId === o.id} onClick={() => act(o)}>
+                    <button type="button" className={`btn ${o.status === "pending" ? "" : "ink"}`} disabled={busyId === o.id || flash?.order.id === o.id} onClick={() => act(o)}>
                       {busyId === o.id ? "Saving…" : NEXT[o.status].label}
                     </button>
                   )}

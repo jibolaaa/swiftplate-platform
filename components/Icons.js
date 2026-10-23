@@ -11,4 +11,5 @@ export const PinIcon = (p) => <svg {...base} {...p}><path d="M12 21s-6.5-5.6-6.5
 export const ClockIcon = (p) => <svg {...base} {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>;
 export const BikeIcon = (p) => <svg {...base} {...p}><circle cx="6" cy="16.5" r="3" /><circle cx="18" cy="16.5" r="3" /><path d="M6 16.5h5l3.5-6H18M9.5 7.5h3l2 3M15 7h2.5" /></svg>;
 export const LogoutIcon = (p) => <svg {...base} {...p}><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" /><path d="M10 8l-4 4 4 4M6 12h10" /></svg>;
+export const MenuIcon = (p) => <svg {...base} {...p}><path d="M4 8h16M4 16h16" /></svg>;
 export const UserIcon = (p) => <svg {...base} {...p}><circle cx="12" cy="8.5" r="3.5" /><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5" /></svg>;

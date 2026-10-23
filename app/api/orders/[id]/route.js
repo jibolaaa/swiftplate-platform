@@ -1,13 +1,18 @@
 import { requireDb } from "../../../../lib/db";
 import { requireAuth, authError } from "../../../../lib/auth";
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(req, { params }) {
   try {
     const user = await requireAuth(req);
+    if (!UUID.test(String(params.id))) return Response.json({ error: "Order not found." }, { status: 404 });
     const sql = requireDb();
     const [order] = await sql`
-      SELECT o.*, r.name AS restaurant_name, r.owner_id
+      SELECT o.*, r.name AS restaurant_name, r.address AS restaurant_address, r.owner_id,
+             d.full_name AS rider_name
       FROM orders o JOIN restaurants r ON r.id = o.restaurant_id
+      LEFT JOIN users d ON d.id = o.rider_id
       WHERE o.id = ${params.id}
     `;
     if (!order) return Response.json({ error: "Order not found." }, { status: 404 });
@@ -28,7 +33,8 @@ export async function GET(req, { params }) {
       FROM order_status_history h LEFT JOIN users u ON u.id = h.changed_by
       WHERE h.order_id = ${order.id} ORDER BY h.created_at
     `;
-    return Response.json({ order, items, history });
+    const [payment] = await sql`SELECT status, paid_at FROM payments WHERE order_id = ${order.id}`;
+    return Response.json({ order, items, history, payment: payment || null });
   } catch (e) {
     return e.status ? authError(e) : Response.json({ error: e.message }, { status: 500 });
   }
