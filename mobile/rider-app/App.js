@@ -3,13 +3,16 @@
 //  Jobs that are packed and ready, and the one you're on.
 //  Taking a job is first come, first served: if another rider
 //  gets there first, the server says so (409) and the job goes.
+//  Every order is paid online before the kitchen cooks it, so
+//  there's no cash to collect. Each step shows a tick when it
+//  goes through.
 //  To try it: paste this file into App.js at snack.expo.dev and
 //  open it in Expo Go. Snack adds the packages it imports.
 // ============================================================
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View, Text, TextInput, Pressable, ScrollView, ActivityIndicator, StyleSheet,
-  RefreshControl, KeyboardAvoidingView, Platform
+  RefreshControl, KeyboardAvoidingView, Platform, Animated
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -43,8 +46,8 @@ const itemsText = (o) => Array.isArray(o.items) && o.items.length ? o.items.map(
 
 // What the rider does next on their own job.
 const NEXT = {
-  rider_assigned: { action: "pickup", label: "I've picked it up", note: "Head to the kitchen and collect the order.", tag: "Go to the kitchen" },
-  picked_up: { action: "deliver", label: "Delivered", note: "Take it to the customer and collect payment.", tag: "On the way" }
+  rider_assigned: { action: "pickup", label: "I've picked it up", note: "Head to the kitchen and collect the order.", tag: "Go to the kitchen", done: "Picked up" },
+  picked_up: { action: "deliver", label: "Delivered", note: "Take it to the customer. It's already paid.", tag: "On the way", done: "Delivered" }
 };
 
 async function call(path, { token, method = "GET", body } = {}) {
@@ -110,10 +113,10 @@ function SignIn({ onSignedIn }) {
           <View style={s.signMark}><Ionicons name="bicycle" size={34} color="#fff" /></View>
           <Text style={s.logo}>swiftplate<Text style={{ color: C.bright }}>.</Text> <Text style={s.logoTag}>Rider</Text></Text>
           <Text style={s.display}>Take a job.{"\n"}Deliver it hot<Text style={{ color: C.bright }}>.</Text></Text>
-          <Text style={s.lead}>When a kitchen packs an order, it shows up here. Take it, pick it up, drop it off and collect payment.</Text>
+          <Text style={s.lead}>When a kitchen packs an order, it shows up here. Take it, pick it up and drop it off. Every order is paid online first.</Text>
 
           <View style={s.howList}>
-            {[["flash-outline", "First rider to tap gets the job"], ["navigate-outline", "Kitchen and customer address on every job"], ["cash-outline", "See how much to collect before you go"]].map(([icon, text]) => (
+            {[["flash-outline", "First rider to tap gets the job"], ["navigate-outline", "Kitchen and customer address on every job"], ["card-outline", "Paid online, so there's no cash to carry"]].map(([icon, text]) => (
               <View key={text} style={s.howRow}><Ionicons name={icon} size={18} color={C.tomato} /><Text style={s.body}>{text}</Text></View>
             ))}
           </View>
@@ -128,7 +131,7 @@ function SignIn({ onSignedIn }) {
             onSubmitEditing={() => go("form", { email, password })} />
           {!!error && <Text style={s.error}>{error}</Text>}
           <Btn title="Sign in" kind="ghost" busy={busy === "form"} disabled={!!busy} onPress={() => go("form", { email, password })} style={{ marginTop: 12 }} />
-          <Text style={s.fine}>This is a demo. No food is delivered and no money is taken.</Text>
+          <Text style={s.fine}>This is a demo. Payments run in Paystack test mode, so no real money moves.</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -147,6 +150,7 @@ function Jobs({ session, onSignOut }) {
   const [busyId, setBusyId] = useState(null);
   const [done, setDone] = useState({ count: 0, kobo: 0 });
   const [refreshing, setRefreshing] = useState(false);
+  const [flash, setFlash] = useState(null); // { order, label } while the tick shows
   const signOut = useRef(onSignOut);
   signOut.current = onSignOut;
 
@@ -171,11 +175,24 @@ function Jobs({ session, onSignOut }) {
     setBusyId(null);
     if (!r.ok) {
       setError(r.status === 409 && action === "claim" ? "Another rider took that job first." : (r.data.error || "That didn't go through. Try again."));
-    } else if (action === "deliver") {
-      setDone(d => ({ count: d.count + 1, kobo: d.kobo + Number(o.total_kobo) }));
+      load();
+      return;
     }
-    load();
+    if (action === "deliver") setDone(d => ({ count: d.count + 1, kobo: d.kobo + Number(o.total_kobo) }));
+    setFlash({ order: o, label: action === "claim" ? "The job is yours" : NEXT[o.status].done });
+    setTimeout(() => { setFlash(null); load(); }, 1300);
   }
+
+  // While the tick shows, keep the job in the list it was in (and only there).
+  function during(list, home) {
+    if (!flash) return list;
+    const id = flash.order.id;
+    if (!home) return list.filter(o => o.id !== id);
+    return list.some(o => o.id === id) ? list.map(o => (o.id === id ? flash.order : o)) : [...list, flash.order];
+  }
+  const wasOpen = flash?.order.status === "ready";
+  const mineShown = during(mine, flash && !wasOpen);
+  const openShown = during(open, flash && wasOpen);
 
   const first = user?.full_name?.split(" ")[0] || "there";
 
@@ -191,23 +208,24 @@ function Jobs({ session, onSignOut }) {
 
         <Text style={s.eyebrow}>Hi {first}</Text>
         <Text style={s.title}>Deliveries</Text>
-        <View style={s.liveRow}><View style={s.liveDot} /><Text style={s.muted}>Live, checks every 5 seconds</Text></View>
+        <Text style={[s.muted, { marginTop: 4 }]}>Take a job, pick it up, deliver it.</Text>
 
         <Text style={[s.meta, { marginTop: 16 }]}>Since you signed in</Text>
         <View style={s.stats}>
           <View style={s.stat}><Text style={s.statValue}>{done.count}</Text><Text style={s.muted}>delivered</Text></View>
-          <View style={s.stat}><Text style={s.statValue}>{naira(done.kobo)}</Text><Text style={s.muted}>collected</Text></View>
+          <View style={s.stat}><Text style={s.statValue}>{naira(done.kobo)}</Text><Text style={s.muted}>of food delivered</Text></View>
         </View>
 
         {!!error && <View style={[s.note, { marginTop: 14 }]}><Text style={[s.body, { color: C.tomato }]}>{error}</Text></View>}
 
         <Text style={[s.h2, { marginTop: 24 }]}>Your delivery</Text>
         {!loaded && <ActivityIndicator color={C.bright} style={{ marginTop: 16 }} />}
-        {loaded && mine.length === 0 && <Text style={[s.empty, { marginTop: 8 }]}>You're free. Take a job below.</Text>}
-        {mine.map(o => {
+        {loaded && mineShown.length === 0 && <Text style={[s.empty, { marginTop: 8 }]}>You're free. Take a job below.</Text>}
+        {mineShown.map(o => {
           const next = NEXT[o.status];
           return (
             <View key={o.id} style={[s.job, s.jobMine]}>
+              {flash?.order.id === o.id && <DoneFlash label={flash.label} />}
               <View style={s.jobTop}>
                 <Text style={s.ticketId}>#{shortId(o.id)}</Text>
                 <View style={[s.chip, { backgroundColor: o.status === "picked_up" ? C.pepperSoft : C.yolk }]}>
@@ -217,12 +235,12 @@ function Jobs({ session, onSignOut }) {
               <Route o={o} />
               {!!itemsText(o) && <Text style={s.body}>{itemsText(o)}</Text>}
               <View style={s.collect}>
-                <Ionicons name="cash-outline" size={18} color={C.pepper} />
-                <Text style={s.body}><Text style={s.strong}>Collect {naira(o.total_kobo)}</Text> from the customer</Text>
+                <Ionicons name="checkmark-circle-outline" size={18} color={C.pepper} />
+                <Text style={s.body}><Text style={s.strong}>{naira(o.total_kobo)} order</Text>, paid online</Text>
               </View>
               {!!next && <Text style={s.muted}>{next.note}</Text>}
               {!!next && (
-                <Btn title={busyId === o.id ? "Saving..." : next.label} busy={busyId === o.id} disabled={busyId === o.id}
+                <Btn title={busyId === o.id ? "Saving..." : next.label} busy={busyId === o.id} disabled={busyId === o.id || !!flash}
                   kind={o.status === "picked_up" ? "green" : "primary"} onPress={() => act(o, next.action)} style={{ marginTop: 6 }} />
               )}
             </View>
@@ -233,22 +251,40 @@ function Jobs({ session, onSignOut }) {
           <Text style={s.h2}>Ready for pickup</Text>
           <Text style={[s.h2, { color: C.muted, fontFamily: F.medium }]}>{open.length}</Text>
         </View>
-        {loaded && open.length === 0 && <Text style={s.empty}>No jobs right now. When a kitchen marks food ready, it shows up here.</Text>}
-        {open.map(o => (
+        {loaded && openShown.length === 0 && <Text style={s.empty}>No jobs right now. When a kitchen marks food ready, it shows up here.</Text>}
+        {openShown.map(o => (
           <View key={o.id} style={s.job}>
+            {flash?.order.id === o.id && <DoneFlash label={flash.label} />}
             <View style={s.jobTop}>
               <Text style={s.ticketId}>#{shortId(o.id)}</Text>
               <Text style={s.meta}>Ready since {lagosTime(o.updated_at || o.created_at)}</Text>
             </View>
             <Route o={o} />
             {!!itemsText(o) && <Text style={s.body}>{itemsText(o)}</Text>}
-            <Text style={s.muted}>Collect {naira(o.total_kobo)} on delivery</Text>
+            <Text style={s.muted}>{naira(o.total_kobo)} order, paid online</Text>
             <Btn title={busyId === o.id ? "Taking it..." : "Take this job"} kind="ink" busy={busyId === o.id}
-              disabled={!!busyId} onPress={() => act(o, "claim")} style={{ marginTop: 6 }} />
+              disabled={!!busyId || !!flash} onPress={() => act(o, "claim")} style={{ marginTop: 6 }} />
           </View>
         ))}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+// A tick over the job for a moment after a step goes through.
+function DoneFlash({ label }) {
+  const pop = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.spring(pop, { toValue: 1, friction: 6, tension: 140, useNativeDriver: Platform.OS !== "web" }).start();
+  }, [pop]);
+  const scale = pop.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] });
+  return (
+    <View style={s.flash} accessibilityLiveRegion="polite" accessibilityLabel={label}>
+      <Animated.View style={[s.flashTick, { opacity: pop, transform: [{ scale }] }]}>
+        <Ionicons name="checkmark" size={36} color="#fff" />
+      </Animated.View>
+      <Animated.Text style={[s.flashText, { opacity: pop }]}>{label}</Animated.Text>
+    </View>
   );
 }
 
@@ -332,8 +368,6 @@ const s = StyleSheet.create({
   btnSub: { fontFamily: F.regular, fontSize: 12.5, opacity: 0.85, marginTop: 1 },
 
   topRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 14 },
-  liveRow: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 6 },
-  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.pepper },
   stats: { flexDirection: "row", gap: 10, marginTop: 8 },
   stat: { flex: 1, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 18, padding: 14 },
   statValue: { fontFamily: F.bold, fontSize: 22, color: C.ink, letterSpacing: -0.5 },
@@ -346,6 +380,12 @@ const s = StyleSheet.create({
   ticketId: { fontFamily: F.bold, fontSize: 15, color: C.ink, letterSpacing: 0.3 },
   chip: { flexDirection: "row", alignItems: "center", height: 28, paddingHorizontal: 11, borderRadius: 999, backgroundColor: C.soft },
   chipText: { fontFamily: F.semi, fontSize: 12.5, color: C.ink },
+  flash: {
+    position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 2, borderRadius: 18,
+    backgroundColor: C.pepper, alignItems: "center", justifyContent: "center", gap: 12
+  },
+  flashTick: { width: 66, height: 66, borderRadius: 33, borderWidth: 3, borderColor: "rgba(255,255,255,0.5)", alignItems: "center", justifyContent: "center" },
+  flashText: { fontFamily: F.bold, fontSize: 19, color: "#fff", letterSpacing: -0.2 },
   collect: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: C.pepperSoft, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12 },
 
   route: { backgroundColor: C.cream, borderRadius: 14, padding: 12 },
